@@ -1,5 +1,6 @@
 from crewai import Agent, Crew, Task
 
+from agents.agent_definitions import planner_llm
 from tools.bash_tool import bash_tool
 
 # Create the Planner Agent
@@ -15,6 +16,7 @@ planner_agent = Agent(
         "first point of contact in the development workflow, ensuring the team has a "
         "clear and unambiguous plan before any code is written."
     ),
+    llm=planner_llm,
     tools=[bash_tool],
     allow_delegation=False,
     verbose=True,

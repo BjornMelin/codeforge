@@ -1,5 +1,6 @@
 from crewai import Agent
 
+from agents.agent_definitions import coder_llm
 from tools.file_tools import read_file, write_file
 from tools.git_tools import git_diff
 from tools.shipit_tools import create_incremental_commit, quality_check
@@ -25,6 +26,7 @@ coder_agent = Agent(
         "logical increments and ensure each increment is validated and committed before moving on. "
         "You are skilled at debugging and fixing your own code based on linter feedback."
     ),
+    llm=coder_llm,
     tools=[read_file, write_file, git_diff, quality_check, create_incremental_commit],
     allow_delegation=False,
     verbose=True,
