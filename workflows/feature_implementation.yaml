@@ -1,0 +1,53 @@
+name: "Autonomous Feature Implementation"
+description: "An end-to-end workflow to take a feature description, implement it, and create a pull request."
+
+steps:
+  - agent: "Planner"
+    description: |
+      1. Your primary goal is to prepare for the implementation of the following feature: '{feature_description}'.
+      2. First, use the bash tool to run `task-master-ai list --status pending --json` to see if a task for this feature already exists.
+      3. If it exists, use its details. If not, create a new task by running `task-master-ai add-task --title "{feature_description}"`.
+      4. Based on the task, create a concise, step-by-step implementation plan for the Coder agent.
+      5. The plan should outline the files to be created or modified and the functions/classes to be implemented.
+    expected_output: "A clear, actionable, step-by-step implementation plan in markdown format."
+    tools:
+      - "bash_tool"
+
+  - agent: "Coder"
+    description: |
+      You have been provided with an implementation plan. Your task is to implement the feature by writing and modifying code.
+      Follow this strict workflow:
+      1. Implement a small, logical piece of the plan (e.g., one function, one file).
+      2. Use the `quality_check` tool on the files you have changed.
+      3. **CRITICAL**: If the quality check fails, you MUST analyze the errors and fix them. You have 3 attempts per logical change. If you fail 3 times, stop and report the final error.
+      4. Once the quality check passes, use the `create_incremental_commit` tool. Your commit message MUST follow the Conventional Commits standard, and you MUST infer the scope from the files changed (e.g., `feat(api): ...`).
+      5. Repeat this loop until the entire implementation plan is complete.
+    expected_output: "A series of successful git commits that fully implement the feature according to the plan. The final output should be a confirmation message stating 'Implementation complete and all commits created.'"
+    tools:
+      - "read_file"
+      - "write_file"
+      - "quality_check"
+      - "create_incremental_commit"
+
+  - agent: "Tester"
+    description: |
+      The Coder agent has completed the implementation. Your job is to perform a final validation of the feature branch.
+      1. Review the implementation plan and the code changes.
+      2. Write and execute necessary tests to ensure the feature works as expected and does not introduce regressions.
+      3. Report any bugs or issues found.
+    expected_output: "A validation report confirming that all tests pass and the feature is working correctly, or a list of bugs to be fixed."
+    tools:
+      - "read_file"
+      - "write_file"
+      - "bash_tool" # To run test commands like `pytest`
+
+  - agent: "Deployer"
+    description: |
+      The feature has been implemented and tested. Your final task is to prepare it for human review.
+      1. Create a final, descriptive pull request title and body. The body should summarize the changes made.
+      2. Use the `create_pull_request` tool to open the PR.
+      3. Use the `bash_tool` to run `task-master-ai update <task_id> --status "In Review"` to update the task status.
+    expected_output: "A confirmation message with the URL of the newly created pull request."
+    tools:
+      - "create_pull_request"
+      - "bash_tool"
