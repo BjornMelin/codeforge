@@ -1,0 +1,7 @@
+[project]
+name = "codeforge"
+version = "0.1.0"
+description = "CodeForge Multi-Agent AI Development Crew"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
