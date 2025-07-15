@@ -1,4 +1,4 @@
-from crewai import Agent, Task, Crew
+from crewai import Agent, Crew, Task
 
 from tools.bash_tool import bash_tool
 
@@ -56,12 +56,8 @@ echo '{
     os.environ["PATH"] = f".:{original_path}"
 
     # Execute the task using a crew
-    test_crew = Crew(
-        agents=[planner_agent],
-        tasks=[planning_task],
-        verbose=True
-    )
-    
+    test_crew = Crew(agents=[planner_agent], tasks=[planning_task], verbose=True)
+
     result = test_crew.kickoff()
 
     # Restore original path
