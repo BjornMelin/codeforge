@@ -4,4 +4,9 @@ version = "0.1.0"
 description = "CodeForge Multi-Agent AI Development Crew"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "crewai[tools]>=0.141.0",
+    "crewai-tools>=0.51.1",
+    "pydantic==2.11.7",
+    "ruff>=0.12.3",
+]
