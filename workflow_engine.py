@@ -1,26 +1,23 @@
 import yaml
-
-# We will create these agent files in the next step, for now, let's create placeholders
-from crewai import Agent, Crew, Task
+from crewai import Crew, Task
 
 from agents.coder_agent import coder_agent
+from agents.deployer_agent import deployer_agent
 
-# Import all agents and tools
+# CHANGE: Import the actual agent definitions, replacing the placeholders.
 from agents.planner_agent import planner_agent
+from agents.researcher_agent import researcher_agent
+from agents.tester_agent import tester_agent
 from tools.bash_tool import bash_tool
 from tools.file_tools import read_file, write_file
 from tools.git_tools import git_diff
+from tools.quality_tools import run_comprehensive_tests
+from tools.search_tools import search_tool
 from tools.shipit_tools import (
     create_incremental_commit,
     create_pull_request,
     quality_check,
 )
-
-researcher_agent = Agent(
-    role="placeholder", goal="placeholder", backstory="placeholder"
-)
-tester_agent = Agent(role="placeholder", goal="placeholder", backstory="placeholder")
-deployer_agent = Agent(role="placeholder", goal="placeholder", backstory="placeholder")
 
 
 class YAMLWorkflowEngine:
@@ -47,6 +44,8 @@ class YAMLWorkflowEngine:
             "quality_check": quality_check,
             "create_incremental_commit": create_incremental_commit,
             "create_pull_request": create_pull_request,
+            "search_tool": search_tool,
+            "run_comprehensive_tests": run_comprehensive_tests,
         }
 
     def create_crew(self, task_params: dict) -> Crew:
@@ -57,7 +56,6 @@ class YAMLWorkflowEngine:
             if not agent:
                 raise ValueError(f"Agent '{step['agent']}' not found in agent mapping.")
 
-            # Substitute parameters into the description
             description = step["description"].format(**task_params)
 
             task = Task(
