@@ -1,15 +1,24 @@
 [project]
 name = "codeforge"
 version = "0.1.0"
-description = "CodeForge Multi-Agent AI Development Crew"
+description = "CodeForge AI: An autonomous multi-agent coding system."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "crewai[tools]>=0.141.0",
-    "crewai-tools>=0.51.1",
-    "pydantic==2.11.7",
+    "pydantic>=2.11.7",
     "ruff>=0.12.3",
     "pyyaml>=6.0.2",
     "httpx>=0.28.1",
     "pytest>=8.4.1",
+    "langchain-openai>=0.2.1,<0.3.0",
+    "python-dotenv>=1.1.1",
+    "click>=8.2.1",
+    "rich>=13.7.0,<14.0.0",
+    "qdrant-client>=1.14.3",
+    "fastembed>=0.7.1",
+    "tavily-python>=0.7.9",
 ]
+
+[tool.uv]
+dev-dependencies = ["pytest-asyncio"]

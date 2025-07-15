@@ -1,7 +1,11 @@
-from crewai import Agent, Crew, Task
-
-from agents.agent_definitions import planner_llm
+from crewai import Agent
+from langchain_openai import ChatOpenAI
 from tools.bash_tool import bash_tool
+
+# Define the LLM for the Planner Agent - a fast and cost-effective model.
+# Assumes OPENAI_API_KEY and OPENAI_API_BASE (for OpenRouter) are in .env
+# TODO: Use direct OpenAI API for OpenAI Models
+planner_llm = ChatOpenAI(model_name="openai/o3", temperature=0.0)
 
 # Create the Planner Agent
 planner_agent = Agent(
@@ -16,57 +20,8 @@ planner_agent = Agent(
         "first point of contact in the development workflow, ensuring the team has a "
         "clear and unambiguous plan before any code is written."
     ),
-    llm=planner_llm,
     tools=[bash_tool],
+    llm=planner_llm,
     allow_delegation=False,
-    verbose=True,
+    verbose=True
 )
-
-# To allow for direct testing of the agent
-if __name__ == "__main__":
-    print("Testing Planner Agent...")
-
-    # Define a test task for the agent
-    planning_task = Task(
-        description=(
-            "Find the next pending task from the task management system. "
-            "Use the `task-master-ai list --status pending --json` command. "
-            "Once you have the task list, identify the highest priority task and "
-            "output its ID and title."
-        ),
-        expected_output="The ID and title of the highest priority pending task.",
-        agent=planner_agent,
-    )
-
-    # To make this test runnable, we need a dummy task-master-ai script
-    with open("task-master-ai", "w") as f:
-        f.write("""
-#!/bin/bash
-echo '{
-  "tasks": [
-    {"id": 101, "title": "Implement OAuth2 login", "priority": "high", "status": "pending"},
-    {"id": 102, "title": "Fix caching bug", "priority": "medium", "status": "pending"}
-  ]
-}'
-        """)
-    import os
-
-    os.chmod("task-master-ai", 0o755)
-
-    # Add the current directory to the PATH for the agent's subprocess to find the script
-    original_path = os.environ.get("PATH", "")
-    os.environ["PATH"] = f".:{original_path}"
-
-    # Execute the task using a crew
-    test_crew = Crew(agents=[planner_agent], tasks=[planning_task], verbose=True)
-
-    result = test_crew.kickoff()
-
-    # Restore original path
-    os.environ["PATH"] = original_path
-
-    print("\n--- Planner Agent Test Result ---")
-    print(result)
-
-    # Cleanup dummy script
-    os.remove("task-master-ai")

@@ -1,6 +1,12 @@
 from crewai import Agent
+from langchain_openai import ChatOpenAI
 
 from tools.search_tools import search_tool
+
+
+researcher_llm = ChatOpenAI(
+    model_name="google/gemini-2.5-flash-preview-05-20", temperature=0.1
+)
 
 # Create the Researcher Agent
 researcher_agent = Agent(
@@ -12,6 +18,7 @@ researcher_agent = Agent(
         "actionable insights. Your research is the foundation upon which great software is built."
     ),
     tools=[search_tool],
+    llm=researcher_llm,
     allow_delegation=False,
     verbose=True,
 )
