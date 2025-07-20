@@ -2,12 +2,22 @@
 name = "codeforge"
 version = "0.1.0"
 description = "CodeForge AI: An autonomous multi-agent coding system."
+authors = [
+    { name = "Bjorn Melin" }
+]
+license = { file = "MIT" }
+keywords = ["ai", "coding", "agent", "multi-agent", "codeforge"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+]
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "crewai[tools]>=0.141.0",
     "pydantic>=2.11.7",
-    "ruff>=0.12.3",
     "pyyaml>=6.0.2",
     "httpx>=0.28.1",
     "pytest>=8.4.1",
@@ -15,10 +25,10 @@ dependencies = [
     "python-dotenv>=1.1.1",
     "click>=8.2.1",
     "rich>=13.7.0,<14.0.0",
-    "qdrant-client>=1.14.3",
+    "qdrant-client>=1.15.0",
     "fastembed>=0.7.1",
-    "tavily-python>=0.7.9",
+    "tavily-python>=0.7.10",
 ]
 
 [tool.uv]
-dev-dependencies = ["pytest-asyncio"]
+dev-dependencies = ["pytest-asyncio", "ruff>=0.12.4"]
