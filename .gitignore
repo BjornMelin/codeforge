@@ -212,4 +212,7 @@ ehthumbs_vista.db
 # Recycle Bin used on file shares
 $RECYCLE.BIN/
 
-#
+# Repo specific
+repomix-output.*
+current_codebase.xml
+prd_adrs.xml
