@@ -1,69 +1,79 @@
-import click
-from workflow_engine import YAMLWorkflowEngine
+# coding=utf-8
+"""Main orchestrator for CodeForge AI workflows.
 
+This module sets up and runs the primary autonomy workflow using LangGraph.
+"""
 
-@click.group()
-def cli():
-    """CodeForge AI: Autonomous Multi-Agent Coding System"""
-    pass
+import os
+from collections import deque
+from typing import Any
 
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
+from redis import Redis
 
-@cli.command()
-@click.option(
-    "--feature",
-    "feature_description",
-    required=True,
-    help="A description of the feature to be implemented.",
+from .config import settings
+from .debate import run_debate
+from .router import route_model
+from .state import State, cap_messages
+from .tools import graphrag_plus
+
+redis: Redis = Redis(host=os.getenv("REDIS_HOST", "localhost"), port=6379, dialect=3)
+checkpointer: MemorySaver = MemorySaver()
+
+workflow: StateGraph = StateGraph(State)
+workflow.add_node("assign_task", lambda state: {"task_queue": deque([state["input"]])})
+workflow.add_node(
+    "research", lambda state: graphrag_plus(state["task_queue"].popleft())
 )
-def ship(feature_description: str):
-    """Triggers the end-to-end autonomous feature implementation workflow."""
-    click.echo(f"🚀 Initiating autonomous workflow to implement: {feature_description}")
+workflow.add_node("debate", run_debate)
+workflow.add_node("implement", lambda state: route_model(state["task"], "coding"))
+workflow.add_edge("assign_task", "research")
+workflow.add_edge("research", "debate")
+workflow.add_edge("debate", "implement")
+workflow.add_edge("implement", END)
 
-    workflow_file = "workflows/feature_implementation.yaml"
-    engine = YAMLWorkflowEngine(workflow_file)
-
-    task_params = {"feature_description": feature_description}
-
-    result = engine.kickoff(task_params)
-
-    click.echo("\n--- Workflow Execution Summary ---")
-    click.echo(result)
+graph = workflow.compile(checkpointer=checkpointer)
 
 
-@cli.command()
-@click.option(
-    "--name",
-    "workflow_name",
-    required=True,
-    help="The name of the YAML workflow to run (e.g., bug_investigation).",
-)
-@click.option(
-    "--params",
-    "params_json",
-    required=False,
-    default="{}",
-    help="A JSON string of parameters for the workflow.",
-)
-def run_workflow(workflow_name: str, params_json: str):
-    """Runs a specific, pre-defined YAML workflow."""
-    import json
+async def run_autonomy_workflow(input: str) -> dict[str, Any]:
+    """Run the full autonomy workflow from input.
 
-    try:
-        params = json.loads(params_json)
-    except json.JSONDecodeError:
-        click.echo("Error: Invalid JSON provided for --params.", err=True)
-        return
+    Args:
+        input: Initial input query or PRD.
 
-    click.echo(f"🚀 Running workflow: {workflow_name}")
+    Returns:
+        Final workflow result dictionary.
+    """
+    state: State = {
+        "input": input,
+        "task_queue": deque(),
+        "messages": [],
+        "private": {},
+        "long_term": {},
+    }
+    redis.publish("tasks", input)
+    sub = redis.pubsub()
+    sub.subscribe("tasks")
+    message = sub.get_message(timeout=1)
+    if message:
+        state["task_queue"].append(message["data"].decode())  # type: ignore
 
-    workflow_file = f"workflows/{workflow_name}.yaml"
-    engine = YAMLWorkflowEngine(workflow_file)
+    if settings.use_gpu:
+        import torch
 
-    result = engine.kickoff(params)
+        @torch.compile(mode="reduce-overhead")
+        async def compiled_invoke(state: State) -> dict[str, Any]:
+            return await graph.ainvoke(state)
 
-    click.echo("\n--- Workflow Execution Summary ---")
-    click.echo(result)
+        result: dict[str, Any] = await compiled_invoke(state)
+    else:
+        result = await graph.ainvoke(state)
+
+    result = cap_messages(result)
+    checkpointer.save(result)
+    return result
 
 
-if __name__ == "__main__":
-    cli()
+# Sample usage
+sample_prd: str = "Generate a simple Python function to add two numbers."

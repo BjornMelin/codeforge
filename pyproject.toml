@@ -1,24 +1,44 @@
 [project]
-name = "codeforge"
+name = "codeforge-ai"
 version = "0.1.0"
-description = "CodeForge AI: An autonomous multi-agent coding system."
+description = "Multi-agent coding system for autonomous development"
+authors = [{name = "Bjorn Melin"}]
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "crewai[tools]>=0.141.0",
-    "pydantic>=2.11.7",
-    "ruff>=0.12.3",
-    "pyyaml>=6.0.2",
-    "httpx>=0.28.1",
-    "pytest>=8.4.1",
-    "langchain-openai>=0.2.1,<0.3.0",
-    "python-dotenv>=1.1.1",
-    "click>=8.2.1",
-    "rich>=13.7.0,<14.0.0",
-    "qdrant-client>=1.14.3",
-    "fastembed>=0.7.1",
-    "tavily-python>=0.7.9",
+    "langgraph>=0.5.3",  # Latest with enhanced persistence/streaming
+    "qdrant-client>=1.15.0",  # Latest (Jul 18, 2025) with async batch/Query API
+    "neo4j>=5.28.1",  # Corrected latest LTS (per releases/PyPI, Jul 2025) with Bolt efficiency
+    "redis>=6.0.0",  # New dialect/client-side caching
+    "tavily-python>=0.7.10",  # Latest with param updates
+    "sentence-transformers>=5.0.0",  # v5.0 with SparseEncoder/hybrid
+    "openai>=1.97.0",  # Latest (Jul 16, 2025) with structured outputs/fine-tuning
+    "httpx>=0.28.0",  # New SSL config/simplified async
+    "tenacity>=9.1.2",  # Bug fixes/new credential providers
+    "torch>=2.7.1; extra == 'gpu'",  # Latest (Jun 4, 2025) with compile/quantization
+    "pydantic>=2.11.7",  # Updated latest core for settings compatibility/new features
+    "pydantic-settings>=2.10.1",  # Added for env/config management (latest per PyPI, Jun 24, 2025)
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.4.1",  # Latest with improved diffs/async
+    "pytest-asyncio>=1.1.0",  # Latest (Jul 15, 2025) with fixture/async mocking
+    "pytest-mock>=3.14.0",
+    "ruff>=0.12.1",  # Updated latest (per PyPI, Jul 2025) with f-string/formatting enhancements
+]
+gpu = ["torch>=2.7.1"]
+
 [tool.uv]
-dev-dependencies = ["pytest-asyncio"]
+# Removed invalid 'lock'; use CLI 'uv lock' for reproducible envs
+
+[tool.ruff]
+line-length = 88
+indent-width = 4
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+ignore = ["E501"]
+fixable = ["ALL"]
