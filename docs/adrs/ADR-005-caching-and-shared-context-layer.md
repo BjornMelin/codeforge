@@ -1,340 +1,109 @@
 # ADR-005: Caching and Shared Context Layer
 
-**Status**: Accepted  
+**Status**: Accepted
 
-**Date**: 2025-07-20  
+**Context**: CodeForge AI needs real-time shared state management across agents in Phase 1, extensible to Phase 2 federated privacy requirements. Critical for preventing hallucination and enabling effective collaboration with <1ms access times for frequent operations. Must maintain consistency across 3-agent debates and scale to 5-agent configurations while preventing information drift and ensuring all agents work from the same factual base.
 
-**Deciders**: CodeForge AI Team  
+**Decision**: LangGraph v0.5.3+ StateGraph with hierarchical memory architecture - short-term shared messages in-memory, long-term checkpointers to SQLite/DB in Phase 1, extending with federated local states in Phase 2.
 
-## Context
+**Consequences**:
 
-Real-time shared state in Phase 1, extend to Phase 2 federated privacy. The system needs efficient context sharing between agents while preventing hallucinations and maintaining performance across distributed agent networks.
+- Positive: Automatic state synchronization across agents, built-in anti-hallucination mechanisms through shared truth, hierarchical memory supports different access patterns, natural extension to federated privacy models, prevents context drift between agents
+- Negative: Framework dependency on LangGraph, need for careful state size management to avoid memory bloat, potential single point of failure for shared state
 
-## Problem Statement
+## Architecture Overview
 
-Provide efficient shared context for anti-hallucination collaboration across phases. Requirements include:
+### Hierarchical Memory Design
 
-- Real-time state synchronization between agents
+- **Short-term Layer**: Active session data, current task context, agent coordination state (in-memory for <1ms access)
+- **Long-term Layer**: Conversation history, learned patterns, persistent facts (SQLite/DB for durability)
+- **Cache Layer**: Frequently accessed data with TTL management (5-minute default)
 
-- Prevention of context drift and hallucinations
+### Anti-Hallucination Strategy
 
-- Hierarchical memory (short-term/long-term)
+- **Shared Truth Repository**: Single source of truth for facts across all agents
+- **Consistency Validation**: Real-time checking of agent outputs against shared context
+- **Automatic Correction**: System-generated corrections for inconsistent agent responses
+- **Fact Verification**: Cross-reference agent claims with established knowledge base
 
-- Privacy-preserving state sharing for Phase 2
+### State Management Requirements
 
-- Low-latency access (<1ms for frequent operations)
-
-## Decision
-
-**LangGraph StateGraph** with hierarchical memory (short-term shared messages, long-term checkpointers/DB) in Phase 1; extend to Phase 2 with federated local states.
-
-## Alternatives Considered
-
-| Approach | Pros | Cons | Score |
-|----------|------|------|-------|
-| **LangGraph StateGraph** | Built-in state management, anti-hallucination features | Framework dependency | **8.9** |
-| Redis-only state | Fast, simple, well-understood | No hierarchical structure, limited features | 8.0 |
-| In-memory Dict | Maximum speed, simple implementation | No persistence, no sharing across restarts | 7.9 |
-| Custom State Manager | Full control, optimized for use case | High development cost, maintenance burden | 7.5 |
-
-## Rationale
-
-- **Anti-hallucination collaboration (8.9)**: Built-in features for consistent state
-
-- **Phase 1 performance gains**: Measured improvements in agent coordination
-
-- **Phase 2 privacy**: Natural extension to federated architectures
-
-- **Framework integration**: Seamless with LangGraph orchestration
-
-## Consequences
-
-### Positive
-
-- Automatic state synchronization across agents
-
-- Built-in anti-hallucination mechanisms
-
-- Hierarchical memory supports different access patterns
-
-- Natural extension to federated privacy models
-
-### Negative
-
-- Framework lock-in with LangGraph
-
-- Need for careful state size management
-
-- Potential bottlenecks in high-concurrency scenarios
-
-### Neutral
-
-- Message limits required to prevent bloat
-
-- Add Flower integration for Phase 2 federated capabilities
-
-## Implementation Notes
-
-### State Schema Design
-```python
-from langgraph.graph import add_messages
-from typing import TypedDict, Annotated, List, Dict, Optional
-
-class SharedState(TypedDict):
-    # Short-term: Active conversation and immediate context
-    messages: Annotated[List[dict], add_messages]
-    current_task: Optional[dict]
-    active_agents: List[str]
-    
-    # Medium-term: Session and workflow context
-    workflow_context: dict
-    agent_capabilities: Dict[str, List[str]]
-    task_history: List[dict]
-    
-    # Metadata for coordination
-    state_version: int
-    last_updated: float
-    coordination_locks: Dict[str, str]
-
-class PrivateState(TypedDict):
-    # Agent-specific state (not shared)
-    agent_id: str
-    internal_reasoning: List[str]
-    private_tools: Dict[str, Any]
-    agent_config: dict
-```
-
-### State Management Implementation
-```python
-class StateManager:
-    def __init__(self, checkpointer_type="memory"):
-        self.shared_state = {}
-        self.private_states = {}
-        self.checkpointer = self._create_checkpointer(checkpointer_type)
-        self.message_limit = 100  # Prevent state bloat
-        
-    def update_shared_state(self, agent_id: str, updates: dict) -> None:
-        """Thread-safe state updates with conflict resolution"""
-        with self._state_lock:
-            # Increment version for optimistic locking
-            current_version = self.shared_state.get('state_version', 0)
-            
-            # Merge updates intelligently
-            self.shared_state.update(updates)
-            self.shared_state['state_version'] = current_version + 1
-            self.shared_state['last_updated'] = time.time()
-            
-            # Trim messages to prevent bloat
-            if len(self.shared_state.get('messages', [])) > self.message_limit:
-                self.shared_state['messages'] = self.shared_state['messages'][-self.message_limit:]
-            
-            # Persist to checkpointer
-            self.checkpointer.save(self.shared_state)
-    
-    def get_context_for_agent(self, agent_id: str) -> dict:
-        """Get relevant context subset for specific agent"""
-        shared_context = self._filter_shared_context(agent_id)
-        private_context = self.private_states.get(agent_id, {})
-        
-        return {
-            'shared': shared_context,
-            'private': private_context,
-            'metadata': {
-                'state_version': self.shared_state.get('state_version', 0),
-                'context_timestamp': time.time()
-            }
-        }
-```
-
-### Anti-Hallucination Mechanisms
-```python
-class HallucinationPrevention:
-    def __init__(self, state_manager: StateManager):
-        self.state_manager = state_manager
-        self.fact_checker = FactChecker()
-        self.consistency_checker = ConsistencyChecker()
-    
-    def validate_agent_contribution(self, agent_id: str, contribution: dict) -> bool:
-        """Validate agent contributions before state updates"""
-        
-        # Check factual consistency with existing state
-        current_context = self.state_manager.get_context_for_agent(agent_id)
-        if not self.fact_checker.is_consistent(contribution, current_context):
-            logger.warning(f"Inconsistent contribution from {agent_id}")
-            return False
-        
-        # Check for hallucinated information
-        if self.fact_checker.contains_hallucination(contribution):
-            logger.warning(f"Potential hallucination detected from {agent_id}")
-            return False
-        
-        # Check cross-agent consistency
-        if not self.consistency_checker.validate_cross_agent(contribution, current_context):
-            logger.warning(f"Cross-agent inconsistency from {agent_id}")
-            return False
-        
-        return True
-    
-    def resolve_conflicts(self, conflicting_updates: List[dict]) -> dict:
-        """Resolve conflicts between concurrent agent updates"""
-        # Implement conflict resolution strategy
-        # Priority: Recent > High-confidence > Specific agent roles
-        return self.consistency_checker.resolve_conflicts(conflicting_updates)
-```
-
-### Memory Hierarchy
-```python
-class HierarchicalMemory:
-    def __init__(self):
-        self.short_term = {}    # In-memory, fast access
-        self.medium_term = {}   # Redis, session persistence
-        self.long_term = {}     # Database, permanent storage
-    
-    def store(self, key: str, value: Any, level: str = "short_term") -> None:
-        if level == "short_term":
-            self.short_term[key] = value
-        elif level == "medium_term":
-            self.medium_term[key] = value
-            self._persist_to_redis(key, value)
-        elif level == "long_term":
-            self.long_term[key] = value
-            self._persist_to_database(key, value)
-    
-    def retrieve(self, key: str) -> Any:
-        # Try short-term first, then medium, then long-term
-        if key in self.short_term:
-            return self.short_term[key]
-        elif key in self.medium_term:
-            return self.medium_term[key]
-        else:
-            # Load from persistent storage
-            value = self._load_from_persistent(key)
-            if value is not None:
-                self.short_term[key] = value  # Cache for fast access
-            return value
-```
-
-## State Synchronization Patterns
-
-### Phase 1: Centralized State
-```mermaid
-graph TB
-    A[Agent 1] --> B[Shared StateGraph]
-    C[Agent 2] --> B
-    D[Agent 3] --> B
-    B --> E[Redis Checkpointer]
-    B --> F[Database Persistence]
-    E --> G[State Recovery]
-    F --> G
-```
-
-### Phase 2: Federated State
-```mermaid
-graph TB
-    A[Local Agent Pool 1] --> B[Local State Manager 1]
-    C[Local Agent Pool 2] --> D[Local State Manager 2]
-    E[Local Agent Pool 3] --> F[Local State Manager 3]
-    B --> G[Federated Aggregator]
-    D --> G
-    F --> G
-    G --> H[Privacy-Preserving Sync]
-    H --> I[Global Context Summary]
-```
-
-## Performance Optimization
-
-### Caching Strategy
-```python
-class StateCache:
-    def __init__(self, max_size=1000, ttl=300):
-        self.cache = {}
-        self.max_size = max_size
-        self.ttl = ttl
-        self.access_times = {}
-    
-    def get(self, key: str) -> Optional[Any]:
-        if key in self.cache:
-            # Check TTL
-            if time.time() - self.access_times[key] < self.ttl:
-                self.access_times[key] = time.time()
-                return self.cache[key]
-            else:
-                # Expired
-                del self.cache[key]
-                del self.access_times[key]
-        return None
-    
-    def set(self, key: str, value: Any) -> None:
-        # Evict if at capacity
-        if len(self.cache) >= self.max_size:
-            oldest_key = min(self.access_times.keys(), 
-                           key=lambda k: self.access_times[k])
-            del self.cache[oldest_key]
-            del self.access_times[oldest_key]
-        
-        self.cache[key] = value
-        self.access_times[key] = time.time()
-```
+- **Consistency**: 100% state consistency across agents in same session
+- **Performance**: <1ms access for short-term, <10ms for long-term memory
+- **Scalability**: Support 10+ concurrent agents in Phase 1, 50+ in Phase 2
+- **Durability**: Zero data loss for important decisions and learned patterns
+- **Privacy**: Hierarchical access controls for federated Phase 2 scenarios
 
 ## Phase 2 Extensions
 
-### Federated State Management
-```python
-class FederatedStateManager:
-    def __init__(self, node_id: str):
-        self.node_id = node_id
-        self.local_state = StateManager()
-        self.federation_client = FederationClient()
-    
-    async def sync_with_federation(self) -> None:
-        """Privacy-preserving state synchronization"""
-        # Extract non-sensitive summary
-        local_summary = self._create_privacy_preserving_summary()
-        
-        # Exchange with other nodes
-        federated_summaries = await self.federation_client.exchange_summaries(
-            local_summary
-        )
-        
-        # Update local context with federated insights
-        self._integrate_federated_context(federated_summaries)
-    
-    def _create_privacy_preserving_summary(self) -> dict:
-        """Create summary that preserves privacy"""
-        return {
-            'task_types_completed': self._get_task_type_counts(),
-            'success_rates': self._get_success_metrics(),
-            'capability_utilization': self._get_capability_usage(),
-            # Exclude: specific code, user data, proprietary logic
-        }
+### Federated Context Management
+
+- **Privacy Levels**: Strict (patterns only), Moderate (anonymized insights), Open (full sharing)
+- **Local State Isolation**: Each federated node maintains private context
+- **Selective Synchronization**: Privacy-filtered context sharing across nodes
+- **Aggregate Learning**: Federated insights without exposing private data
+
+### Implementation Architecture
+
+```pseudocode
+StateManager {
+  shortTermMemory: InMemoryCache<1ms
+  longTermMemory: PersistentStorage<10ms  
+  factRepository: SharedTruthBase
+  
+  getContext(agentId, contextType) -> Context
+  updateContext(agentId, updates) -> bool
+  validateOutput(agentId, output) -> ValidationResult
+}
+
+AntiHallucinationLayer {
+  verifyFacts(output) -> FactCheckResult
+  checkConsistency(output, sharedContext) -> ConsistencyResult
+  generateCorrections(issues) -> CorrectionList
+}
 ```
 
-## Performance Targets
+## Success Criteria
 
-| Metric | Phase 1 Target | Phase 2 Target |
-|--------|----------------|----------------|
-| State Access Latency | <1ms | <5ms |
-| State Update Latency | <10ms | <50ms |
-| Memory Usage | <100MB | <500MB |
-| Sync Frequency | Real-time | Every 30s |
-| Conflict Resolution | <100ms | <200ms |
+### Performance Targets
 
-## Related Decisions
+- **Context Access**: <1ms short-term, <10ms long-term memory access
+- **State Synchronization**: <100ms for cross-agent updates
+- **Memory Efficiency**: <50MB total state size per active session
+- **Cache Hit Rate**: >90% for frequently accessed context
+- **Anti-Hallucination Accuracy**: <2% false positive rate
 
-- ADR-002: Database and Memory System
+### Reliability Metrics
 
-- ADR-004: Orchestration and Task Management
+- **State Consistency**: 100% consistency across agents in same session
+- **Data Persistence**: Zero data loss for long-term memory
+- **Recovery Time**: <5s to restore state after system restart
+- **Concurrent Access**: Support 10+ agents simultaneously without conflicts
+- **Truth Validation**: >95% accuracy in fact checking and correction
 
-- ADR-014: Federated Basics (Phase 2)
+### Quality Metrics
 
-## Monitoring
+- **Hallucination Reduction**: 40% fewer inconsistent responses vs baseline
+- **Context Relevance**: >85% relevance score for retrieved context
+- **Agent Coordination**: 30% improvement in multi-agent task completion
+- **Memory Utilization**: <500MB peak memory usage for 10 concurrent sessions
 
-- State access patterns and hit rates
+## Implementation Strategy
 
-- State size growth and trimming effectiveness
+### Phase 1A: Core Architecture (Week 1-2)
 
-- Conflict resolution frequency and success
+- Implement LangGraph StateGraph with hierarchical memory
+- Basic shared context management and caching
+- Simple anti-hallucination with fact checking
 
-- Cross-agent consistency metrics
+### Phase 1B: Advanced Features (Week 3-4)
 
-- Privacy preservation compliance (Phase 2)
+- Sophisticated consistency validation
+- Automatic correction mechanisms
+- Performance optimization and monitoring
+
+### Phase 1C: Production Hardening (Week 5-6)
+
+- Comprehensive error handling and recovery
+- Load testing with target performance metrics
+- Documentation and federated extension points

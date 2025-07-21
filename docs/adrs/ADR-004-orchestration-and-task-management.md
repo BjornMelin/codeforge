@@ -1,285 +1,159 @@
 # ADR-004: Orchestration and Task Management
 
-**Status**: Accepted  
+**Status**: Accepted
 
-**Date**: 2025-07-20  
+**Context**: CodeForge AI requires dynamic workflow orchestration and task coordination in Phase 1, scalable to Phase 2 extended agents. Needs to handle complex agent coordination, task distribution, and workflow management while maintaining low latency and high reliability. Must support 3-agent debate flows in Phase 1 and scale to 5-agent configurations in Phase 2.
 
-**Deciders**: CodeForge AI Team  
+**Decision**: LangGraph v0.5.3+ graphs with hybrid in-memory deque + Redis v6.0.0+ Pub/Sub for task management in Phase 1, extending to 5-agent support in Phase 2.
 
-## Context
+**Consequences**:
 
-Dynamic workflows/task coordination in Phase 1, scale to Phase 2 extended agents. The system needs to handle complex agent coordination, task distribution, and workflow management while maintaining low latency and high reliability.
+- Positive: Low-latency task processing, 30% improvement in coordination efficiency, rich workflow definition capabilities, scalable to Phase 2 requirements, built-in state persistence
+- Negative: Increased architectural complexity, need for Redis infrastructure, synchronization overhead between in-memory and persistent task queues
 
-## Problem Statement
+## Architecture Overview
 
-Coordinate dynamic workflows and task management across phases. Requirements include:
+### Hybrid Task Management
 
-- Real-time task assignment and coordination
+- **In-Memory Queue**: Ultra-low latency task assignment using deque structures
+- **Redis Persistence**: Durable task storage and cross-instance coordination
+- **Priority Handling**: Critical tasks bypass normal queue ordering
+- **Dependency Management**: Automatic task dependency resolution and activation
 
-- Low-latency agent-to-agent communication
+### Agent Coordination Strategy
 
-- Persistent task state across restarts
-
-- Scalability from 3 agents (Phase 1) to 500+ agents (Phase 2)
-
-- Workflow orchestration with complex dependencies
-
-## Decision
-
-**LangGraph graphs** with **hybrid in-memory deque + Redis Pub/Sub** in Phase 1; extend to Phase 2 with 5-agent support.
-
-## Alternatives Considered
-
-| Approach | Pros | Cons | Score |
-|----------|------|------|-------|
-| **LangGraph + Hybrid Queue** | Graph-based workflows, low latency, persistent | Setup complexity | **8.6** |
-| Pure CLI orchestration | Simple, direct control | High overhead, poor scalability | 7.5 |
-| Pure Database queue | Persistent, scalable | Higher latency for real-time ops | 7.6 |
-| Celery + Redis | Mature, battle-tested | Heavyweight, complex for simple cases | 8.0 |
-
-## Rationale
-
-- **Low-latency/efficiency (8.6)**: +30% coordination improvement in Phase 1
-
-- **Scalable architecture**: Natural extension to Phase 2 with larger agent pools
-
-- **Best of both worlds**: In-memory speed with persistent reliability
-
-- **Graph-based workflows**: Complex dependencies and conditional logic
-
-## Consequences
-
-### Positive
-
-- Optimal performance for real-time agent coordination
-
-- Rich workflow definition capabilities through LangGraph
-
-- Persistent task state survives restarts
-
-- Scalable to Phase 2 requirements
-
-### Negative
-
-- Increased architectural complexity
-
-- Need for Redis infrastructure
-
-- Synchronization overhead between in-memory and persistent stores
-
-### Neutral
-
-- Centralized assignment coordination in Phase 1
-
-- Toggle for Phase 2 extended agent support
-
-## Implementation Notes
-
-### Workflow Definition
-```python
-from langgraph.graph import StateGraph, add_messages
-from collections import deque
-import redis
-import asyncio
-
-class TaskState(TypedDict):
-    task_id: str
-    status: str  # pending, in_progress, completed, failed
-    assigned_agent: str
-    priority: int
-    dependencies: List[str]
-    result: Optional[dict]
-
-class TaskManager:
-    def __init__(self):
-        self.in_memory_queue = deque()
-        self.redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
-        self.task_states = {}
-    
-    async def assign_task(self, task: TaskState) -> str:
-        # In-memory for speed
-        self.in_memory_queue.append(task)
-        # Redis for persistence
-        await self.redis_client.hset(f"task:{task['task_id']}", mapping=task)
-        # Pub/Sub notification
-        await self.redis_client.publish('task_assignments', task['task_id'])
-        return task['task_id']
-```
-
-### Agent Coordination
-```python
-class AgentCoordinator:
-    def __init__(self, agent_id: str):
-        self.agent_id = agent_id
-        self.task_manager = TaskManager()
-        self.redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
-    
-    async def listen_for_tasks(self):
-        pubsub = self.redis_client.pubsub()
-        await pubsub.subscribe('task_assignments')
-        
-        async for message in pubsub.listen():
-            if message['type'] == 'message':
-                task_id = message['data']
-                await self.try_claim_task(task_id)
-    
-    async def try_claim_task(self, task_id: str):
-        # Atomic task claiming using Redis
-        claimed = await self.redis_client.set(
-            f"claim:{task_id}", 
-            self.agent_id, 
-            nx=True, 
-            ex=300  # 5 minute expiration
-        )
-        if claimed:
-            await self.execute_task(task_id)
-```
+- **Capability-Based Assignment**: Match tasks to agents based on skills and availability
+- **Load Balancing**: Distribute tasks across available agents optimally
+- **Performance Tracking**: Monitor agent effectiveness and adjust assignments
+- **Fault Tolerance**: Automatic task reassignment on agent failure
 
 ### Workflow Orchestration
-```python
-def create_development_workflow():
-    workflow = StateGraph(State)
+
+- **LangGraph Integration**: StateGraph-based workflow definitions
+- **Conditional Routing**: Dynamic workflow paths based on task analysis
+- **Debate Workflows**: Specialized 3-agent debate orchestration
+- **Error Recovery**: Automatic retry and workflow continuation mechanisms
+
+## Debate Coordination Architecture
+
+### 3-Agent Debate System (Phase 1)
+
+- **Proponent Agent**: Argues for proposed solution with supporting evidence
+- **Opponent Agent**: Identifies risks and counterarguments
+- **Moderator Agent**: Synthesizes arguments and makes final decision
+- **Round Management**: Maximum 2 rounds for efficiency
+- **Consensus Tracking**: Confidence scoring and decision validation
+
+### 5-Agent Extension (Phase 2)
+
+- **Additional Roles**: Advocate (user perspective), Critic (technical perspective)
+- **Extended Rounds**: Up to 3 rounds for complex decisions
+- **Specialization**: Domain-specific agent expertise
+- **Consensus Algorithms**: Sophisticated agreement mechanisms
+
+### Implementation Architecture
+
+```pseudocode
+TaskOrchestrator {
+  inMemoryQueue: PriorityDeque<Task>
+  persistentQueue: Redis
+  agentPool: Map<AgentID, AgentCapabilities>
+  activeWorkflows: Map<WorkflowID, LangGraphInstance>
+  
+  submitTask(task) -> TaskID {
+    if (task.priority == CRITICAL) {
+      inMemoryQueue.pushFront(task)
+    } else {
+      inMemoryQueue.pushBack(task)
+    }
     
-    # Core workflow nodes
-    workflow.add_node('task_assignment', assign_development_task)
-    workflow.add_node('research_phase', research_agent)
-    workflow.add_node('debate_phase', debate_subgraph)
-    workflow.add_node('implementation', implementation_agent)
-    workflow.add_node('testing', testing_agent)
-    workflow.add_node('review', review_agent)
+    persistentQueue.store(task)
+    notifyAvailableAgents(task)
+    return task.id
+  }
+  
+  assignNextTask(agentID) -> Task {
+    task = findBestMatch(agentID, inMemoryQueue)
+    if (task) {
+      task.assignedAgent = agentID
+      moveToRunning(task)
+      return task
+    }
+    return null
+  }
+}
+
+DebateOrchestrator {
+  participants: List<AgentRole>
+  maxRounds: Integer
+  consensusThreshold: Float
+  
+  runDebate(proposal) -> Decision {
+    for round in 1..maxRounds {
+      arguments = collectArguments(participants, proposal)
+      synthesis = moderatorAnalysis(arguments)
+      
+      if (consensusReached(synthesis)) {
+        return synthesis.decision
+      }
+      
+      proposal = refineProposal(proposal, arguments)
+    }
     
-    # Conditional edges based on task requirements
-    workflow.add_conditional_edges(
-        'task_assignment',
-        route_by_task_type,
-        {
-            'research_needed': 'research_phase',
-            'direct_implementation': 'implementation',
-            'complex_decision': 'debate_phase'
-        }
-    )
-    
-    # Sequential edges for standard flow
-    workflow.add_edge('research_phase', 'debate_phase')
-    workflow.add_edge('debate_phase', 'implementation')
-    workflow.add_edge('implementation', 'testing')
-    workflow.add_edge('testing', 'review')
-    
-    return workflow.compile(checkpointer=MemorySaver())
+    return finalDecision(synthesis)
+  }
+}
 ```
 
-## Task Priority System
+## Success Criteria
 
-```python
-class TaskPriority(Enum):
-    CRITICAL = 1    # Security issues, build breaks
-    HIGH = 2        # Feature development, major bugs
-    MEDIUM = 3      # Enhancements, minor bugs
-    LOW = 4         # Documentation, cleanup
+### Performance Targets
 
-class PriorityQueue:
-    def __init__(self):
-        self.queues = {priority: deque() for priority in TaskPriority}
-    
-    def add_task(self, task: TaskState):
-        priority = TaskPriority(task['priority'])
-        self.queues[priority].append(task)
-    
-    def get_next_task(self) -> Optional[TaskState]:
-        for priority in TaskPriority:
-            if self.queues[priority]:
-                return self.queues[priority].popleft()
-        return None
-```
+- **Task Coordination Efficiency**: 30% improvement over baseline sequential processing
+- **Queue Processing Latency**: <100ms for task assignment and status updates
+- **Agent Utilization**: >80% utilization across agent pool during peak loads
+- **Workflow Completion Rate**: >95% successful completion for standard workflows
+- **Debate Effectiveness**: 20-30% accuracy improvement for complex decisions
 
-## Scalability Architecture
+### Scalability Metrics
 
-### Phase 1 (3-5 Agents)
-```mermaid
-graph TB
-    A[Task Input] --> B[LangGraph Orchestrator]
-    B --> C[In-Memory Queue]
-    C --> D[Redis Persistence]
-    D --> E[Agent Pool]
-    E --> F[Research Agent]
-    E --> G[Debate Agents x3]
-    E --> H[Implementation Agent]
-    F --> I[Shared State]
-    G --> I
-    H --> I
-    I --> J[Output]
-```
+- **Concurrent Tasks**: Support 50+ concurrent tasks in Phase 1, 200+ in Phase 2
+- **Agent Pool Size**: Support 10+ agents in Phase 1, 50+ in Phase 2
+- **Workflow Complexity**: Handle 7-node workflows in Phase 1, 15+ nodes in Phase 2
+- **Memory Efficiency**: <100MB memory overhead for task management system
+- **Throughput**: 500+ task operations per minute sustained
 
-### Phase 2 (100+ Agents)
-```mermaid
-graph TB
-    A[Task Input] --> B[LangGraph Orchestrator]
-    B --> C[Distributed Queue Manager]
-    C --> D[Redis Cluster]
-    D --> E[Agent Pool Manager]
-    E --> F[Research Agents x5]
-    E --> G[Debate Agents x15]
-    E --> H[Implementation Agents x20]
-    E --> I[Testing Agents x10]
-    E --> J[Specialized Agents x50+]
-    F --> K[Federated State]
-    G --> K
-    H --> K
-    I --> K
-    J --> K
-    K --> L[Output]
-```
+### Reliability Targets
 
-## Performance Targets
+- **Task Persistence**: Zero task loss during normal operations with Redis backup
+- **Agent Failover**: <10s detection and reassignment for failed agents
+- **Workflow Recovery**: Automatic retry and recovery for 90% of failed workflows
+- **Data Consistency**: Eventual consistency between in-memory and persistent storage
+- **System Uptime**: >99.5% availability for task management services
 
-| Metric | Phase 1 Target | Phase 2 Target |
-|--------|----------------|----------------|
-| Task Assignment Latency | <10ms | <50ms |
-| Agent Response Time | <100ms | <200ms |
-| Concurrent Tasks | 10 | 100+ |
-| Workflow Completion | <5 minutes | <10 minutes |
-| System Availability | 99% | 99.9% |
+### Quality Metrics
 
-## Monitoring and Observability
+- **Task Assignment Accuracy**: >95% optimal agent-task matching
+- **Debate Decision Quality**: 25% improvement in solution quality vs single-agent
+- **Resource Optimization**: <20% idle time for available agents
+- **Error Rate**: <2% task failures due to orchestration issues
 
-```python
-class TaskMetrics:
-    def __init__(self):
-        self.task_counters = defaultdict(int)
-        self.timing_metrics = defaultdict(list)
-    
-    def record_task_start(self, task_id: str, task_type: str):
-        self.task_counters[f"{task_type}_started"] += 1
-        self.timing_metrics[task_id] = {'start_time': time.time()}
-    
-    def record_task_completion(self, task_id: str, task_type: str, success: bool):
-        end_time = time.time()
-        start_time = self.timing_metrics[task_id]['start_time']
-        duration = end_time - start_time
-        
-        self.task_counters[f"{task_type}_completed"] += 1
-        if success:
-            self.task_counters[f"{task_type}_success"] += 1
-        else:
-            self.task_counters[f"{task_type}_failed"] += 1
-```
+## Implementation Strategy
 
-## Related Decisions
+### Phase 1A: Core Task Management (Week 1-2)
 
-- ADR-001: Multi-Agent Framework Selection
+- Implement hybrid in-memory + Redis task management
+- Add basic agent coordination and capability-based assignment
+- Test with simple linear workflows and validate latency targets
 
-- ADR-005: Caching and Shared Context Layer
+### Phase 1B: Advanced Orchestration (Week 3-4)
 
-- ADR-010: Task Management System
+- Implement LangGraph workflow orchestration with conditional routing
+- Add 3-agent debate workflows with role specialization
+- Test complex multi-step coding workflows and measure effectiveness
 
-## Monitoring
+### Phase 1C: Production Optimization (Week 5-6)
 
-- Task queue depths and processing rates
-
-- Agent utilization and idle time
-
-- Workflow completion times
-
-- Redis Pub/Sub message latencies
-
-- Cross-agent coordination efficiency
+- Add comprehensive performance monitoring and alerting
+- Implement automatic task recovery and retry mechanisms
+- Load testing and capacity planning for Phase 2 scalability requirements

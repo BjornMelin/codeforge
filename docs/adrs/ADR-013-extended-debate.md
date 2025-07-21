@@ -1,597 +1,182 @@
-# ADR-013: Extended Debate (Phase 2)
+# ADR-013: Extended Debate
 
-**Status**: Proposed (for Phase 2)  
+**Status**: Accepted
 
-**Date**: 2025-07-20  
+**Context**: Phase 2 of CodeForge AI requires more sophisticated reasoning for complex architectural decisions, system designs, and high-stakes technical choices. While 3-agent debate provides good results, 5-agent configuration enables deeper analysis with specialized perspectives for critical decisions requiring comprehensive evaluation.
 
-**Deciders**: CodeForge AI Team  
+**Decision**: Extend debate system to 5 agents using LangGraph v0.5.3+ with specialized roles (proponent, opponent, advocate, critic, moderator) and up to 3 rounds for complex Phase 2 scenarios, maintaining compatibility with Phase 1 3-agent system.
 
-## Context
+**Consequences**:
 
-Scale Phase 1 3-agent debate for toughest tasks. Phase 1's 3-agent debate (pro/con/moderator) works well for standard decisions but needs scaling for the most complex reasoning, planning, and architectural decisions requiring deeper analysis.
+- Positive: Higher quality decisions for complex scenarios, more comprehensive perspective coverage, specialized expertise injection, better stakeholder representation
+- Negative: Increased latency and computational cost, more complex coordination, potential for analysis paralysis, higher token consumption
 
-## Problem Statement
+## Architecture Overview
 
-Phase 1 balanced approach needs enhanced depth for complex tasks. Requirements include:
+### 5-Agent Role Specialization
 
-- Deeper analysis for complex architectural decisions
+- **Proponent**: Advocates for proposed solution with technical evidence
+- **Opponent**: Identifies risks, limitations, and alternative approaches  
+- **Advocate**: Represents user/stakeholder perspectives and practical concerns
+- **Critic**: Provides objective technical analysis and quality assessment
+- **Moderator**: Synthesizes all perspectives and facilitates consensus building
 
-- More nuanced reasoning for multi-faceted problems
+### Enhanced Debate Structure
 
-- Enhanced perspective diversity for comprehensive evaluation
+- **Extended Rounds**: Up to 3 rounds for complex architectural decisions
+- **Parallel Initial Phase**: Simultaneous argument development for efficiency
+- **Sequential Refinement**: Structured response and counter-response phases
+- **Consensus Building**: Sophisticated agreement mechanisms with weighted input
 
-- Scalable complexity without overwhelming simple tasks
+### Debate Complexity Triggers
 
-- Maintain cost efficiency for routine decisions
+- **System Architecture**: Major design decisions affecting multiple components
+- **Performance Critical**: Decisions with significant performance implications
+- **Security Sensitive**: Changes affecting system security posture
+- **High Stakes**: Production deployments or major refactoring decisions
+- **Multi-Stakeholder**: Decisions affecting various user groups or teams
 
-## Decision
+## Enhanced Orchestration
 
-**Toggle to 5 agents** (add advocate/critic/refiner) + 3 rounds for +10% gains in complex reasoning tasks.
+### Dynamic Role Assignment
 
-## Alternatives Considered
+- **Domain Expertise**: Select agents based on specialized knowledge areas
+- **Stakeholder Representation**: Ensure relevant perspectives are included
+- **Technical Focus**: Adjust technical depth based on decision complexity
+- **Time Constraints**: Balance thoroughness with decision timeline requirements
 
-| Approach | Pros | Cons | Score |
-|----------|------|------|-------|
-| **5-Agent Toggle System** | Scalable complexity, optimal for hard problems | Higher resource usage, complexity | **8.2** |
-| Keep 3-agent system | Sufficient for most tasks, proven approach | Limited depth for complex problems | 8.0 |
-| Always use 5 agents | Maximum depth for all tasks | Overkill for simple decisions, high costs | 7.5 |
-| 7+ agent system | Extreme depth potential | Diminishing returns, coordination complexity | 7.0 |
+### Parallel Processing Optimization
 
-## Rationale
+- **Initial Arguments**: Proponent, opponent, advocate, and critic work simultaneously
+- **Evidence Gathering**: Parallel research and fact-checking across agents
+- **Perspective Development**: Independent viewpoint formation before interaction
+- **Efficiency Gains**: Reduce overall debate time through parallelization
 
-- **Scalable gains (8.2)**: +10% improvement on complex tasks while preserving efficiency
+### Implementation Architecture
 
-- **Smart resource allocation**: Only uses extended debate when complexity justifies it
-
-- **Proven extension**: Natural progression from established 3-agent foundation
-
-- **Cost-conscious**: Toggle prevents unnecessary overhead on routine tasks
-
-## Consequences
-
-### Positive
-
-- Enhanced reasoning quality for the most challenging problems
-
-- Better architectural and design decisions through diverse perspectives
-
-- Improved handling of multi-stakeholder considerations
-
-- Scalable complexity based on task requirements
-
-### Negative
-
-- Higher computational costs and latency for complex tasks
-
-- Increased coordination complexity with more agents
-
-- Risk of analysis paralysis on edge cases
-
-### Neutral
-
-- Higher load toggle mechanism for selective use
-
-- Integration with existing debate infrastructure
-
-## Implementation Notes
-
-### Extended Debate Architecture
-```python
-from typing import List, Dict, Optional, Any
-from dataclasses import dataclass
-from enum import Enum
-import asyncio
-
-class ExtendedDebateRole(Enum):
-    PROPONENT = "proponent"        # Phase 1
-    OPPONENT = "opponent"          # Phase 1
-    MODERATOR = "moderator"        # Phase 1
-    ADVOCATE = "advocate"          # Phase 2
-    CRITIC = "critic"              # Phase 2
-    REFINER = "refiner"            # Phase 2
-
-@dataclass
-class ComplexityAssessment:
-    score: float  # 0.0-1.0
-    factors: List[str]
-    reasoning: str
-    recommended_agents: int
-    recommended_rounds: int
-
-class ExtendedDebateSystem:
-    def __init__(self, base_debate_system, model_router):
-        self.base_system = base_debate_system
-        self.model_router = model_router
-        self.complexity_threshold = 0.7  # Use 5 agents for complexity > 0.7
-        
-        # Extended agent configurations
-        self.agent_configs = {
-            ExtendedDebateRole.ADVOCATE: {
-                'focus': 'practical_benefits',
-                'perspective': 'implementation_focused',
-                'prompt_style': 'supportive_practical'
-            },
-            ExtendedDebateRole.CRITIC: {
-                'focus': 'potential_problems',
-                'perspective': 'risk_assessment',
-                'prompt_style': 'analytical_cautious'
-            },
-            ExtendedDebateRole.REFINER: {
-                'focus': 'synthesis_optimization',
-                'perspective': 'solution_oriented',
-                'prompt_style': 'constructive_integrative'
-            }
-        }
+```pseudocode
+ExtendedDebateOrchestrator {
+  participants: [Proponent, Opponent, Advocate, Critic, Moderator]
+  maxRounds: 3  // Phase 2 extension
+  consensusThreshold: 0.8  // Higher threshold for complex decisions
+  specialization: DomainExpertise
+  
+  runExtendedDebate(proposal, context) -> DebateDecision {
+    assignSpecializations(participants, context.domain)
+    debate = initializeExtendedDebate(proposal, context)
     
-    async def assess_complexity(self, topic: str, context: Dict[str, Any]) -> ComplexityAssessment:
-        """Assess whether extended debate is warranted"""
-        
-        complexity_factors = []
-        base_score = 0.3
-        
-        # Topic length and detail
-        if len(topic) > 200:
-            base_score += 0.1
-            complexity_factors.append("detailed_topic")
-        
-        # Context complexity indicators
-        if context.get('stakeholder_count', 0) > 3:
-            base_score += 0.15
-            complexity_factors.append("multiple_stakeholders")
-        
-        if context.get('technical_domains', 0) > 2:
-            base_score += 0.15
-            complexity_factors.append("cross_domain_complexity")
-        
-        if context.get('time_horizon') == 'long_term':
-            base_score += 0.1
-            complexity_factors.append("long_term_implications")
-        
-        if context.get('budget_impact') == 'high':
-            base_score += 0.1
-            complexity_factors.append("high_impact_decision")
-        
-        # AI-based complexity assessment
-        ai_assessment = await self._ai_complexity_assessment(topic, context)
-        base_score += ai_assessment * 0.2
-        
-        if ai_assessment > 0.7:
-            complexity_factors.append("ai_assessed_high_complexity")
-        
-        # Determine agent count and rounds
-        if base_score >= 0.8:
-            recommended_agents = 5
-            recommended_rounds = 3
-        elif base_score >= 0.7:
-            recommended_agents = 5
-            recommended_rounds = 2
-        else:
-            recommended_agents = 3
-            recommended_rounds = 2
-        
-        return ComplexityAssessment(
-            score=min(base_score, 1.0),
-            factors=complexity_factors,
-            reasoning=f"Complexity score: {base_score:.2f}, factors: {', '.join(complexity_factors)}",
-            recommended_agents=recommended_agents,
-            recommended_rounds=recommended_rounds
-        )
+    // Parallel initial phase
+    initialArguments = runParallelPhase(participants[0:4], proposal)
     
-    async def _ai_complexity_assessment(self, topic: str, context: Dict[str, Any]) -> float:
-        """Use AI to assess topic complexity"""
-        
-        prompt = f"""
-        Assess the complexity of this decision/topic on a scale of 0.0-1.0:
-        
-        Topic: {topic}
-        Context: {context}
-        
-        Consider:
-        - Number of variables and dependencies
-        - Potential for unintended consequences
-        - Stakeholder diversity and conflicting interests
-        - Technical complexity and domain expertise required
-        - Long-term vs short-term trade-offs
-        
-        Return only a number between 0.0 and 1.0.
-        """
-        
-        response = await self.model_router.route_request(
-            prompt, {'task_type': 'analysis', 'agent_role': 'complexity_assessor'}
-        )
-        
-        try:
-            return float(response.strip())
-        except:
-            return 0.5  # Default moderate complexity
+    for round in 1..maxRounds {
+      refinedArguments = refineArguments(initialArguments, round)
+      synthesis = moderator.synthesize(refinedArguments, context)
+      
+      if (synthesis.confidence > consensusThreshold) {
+        return synthesis.decision
+      }
+      
+      if (round < maxRounds) {
+        proposal = moderator.refineProposal(proposal, synthesis)
+        initialArguments = updateArguments(refinedArguments, proposal)
+      }
+    }
+    
+    return moderator.finalDecision(debate)
+  }
+}
+
+SpecializationManager {
+  expertiseDomains: Map<Domain, List<AgentCapability>>
+  roleAssignment: DynamicAssignment
+  
+  assignSpecializations(agents, domain) {
+    for agent in agents {
+      expertise = expertiseDomains[domain]
+      agent.setSpecialization(expertise)
+    }
+  }
+}
 ```
 
-### Extended Agent Implementations
-```python
-class ExtendedDebateAgents:
-    def __init__(self, model_router):
-        self.model_router = model_router
-    
-    async def advocate_agent(self, state: DebateState) -> DebateState:
-        """Agent focused on practical advocacy and implementation benefits"""
-        
-        context = self._build_extended_context(state, ExtendedDebateRole.ADVOCATE)
-        
-        prompt = f"""
-        You are an ADVOCATE for practical implementation of: {state['topic']}
-        
-        Previous debate rounds:
-        {context}
-        
-        Focus on PRACTICAL BENEFITS and IMPLEMENTATION ADVANTAGES:
-        
-        1. Real-world applicability and usefulness
-        2. Stakeholder benefits and value propositions
-        3. Implementation feasibility and pathways
-        4. Resource utilization and efficiency gains
-        5. Risk mitigation through proper implementation
-        
-        Provide strong advocacy that considers:
-        - Who benefits and how
-        - What makes this practically valuable
-        - How implementation risks can be managed
-        - Why the benefits outweigh the costs
-        
-        Be concrete and implementation-focused in your advocacy.
-        """
-        
-        response = await self.model_router.route_request(
-            prompt, {'task_type': 'reasoning', 'agent_role': 'advocate'}
-        )
-        
-        argument = self._parse_extended_argument(response, ExtendedDebateRole.ADVOCATE, state)
-        state['arguments'].append(argument)
-        
-        return state
-    
-    async def critic_agent(self, state: DebateState) -> DebateState:
-        """Agent focused on critical analysis and risk assessment"""
-        
-        context = self._build_extended_context(state, ExtendedDebateRole.CRITIC)
-        
-        prompt = f"""
-        You are a CRITIC providing rigorous analysis of: {state['topic']}
-        
-        Previous debate rounds:
-        {context}
-        
-        Focus on CRITICAL ANALYSIS and RISK ASSESSMENT:
-        
-        1. Logical fallacies and weak reasoning in arguments
-        2. Unstated assumptions and their validity
-        3. Potential negative consequences and risks
-        4. Resource constraints and implementation challenges
-        5. Alternative perspectives and frameworks
-        
-        Provide constructive criticism that examines:
-        - What could go wrong and why
-        - Where the logic breaks down
-        - What important factors are being overlooked
-        - How the costs might outweigh benefits
-        
-        Be thorough and analytical, but constructive in your criticism.
-        """
-        
-        response = await self.model_router.route_request(
-            prompt, {'task_type': 'analysis', 'agent_role': 'critic'}
-        )
-        
-        argument = self._parse_extended_argument(response, ExtendedDebateRole.CRITIC, state)
-        state['arguments'].append(argument)
-        
-        return state
-    
-    async def refiner_agent(self, state: DebateState) -> DebateState:
-        """Agent focused on synthesis and solution refinement"""
-        
-        current_round_args = [
-            arg for arg in state['arguments']
-            if arg.round_number == state['current_round']
-        ]
-        
-        prompt = f"""
-        You are a REFINER synthesizing insights on: {state['topic']}
-        
-        Current round arguments from all perspectives:
-        {self._format_arguments_for_synthesis(current_round_args)}
-        
-        Focus on SYNTHESIS and SOLUTION REFINEMENT:
-        
-        1. Integrate valid points from all perspectives
-        2. Identify areas of convergence and divergence
-        3. Propose refined approaches that address concerns
-        4. Suggest compromise solutions or hybrid approaches
-        5. Highlight key insights and remaining questions
-        
-        Provide constructive synthesis that:
-        - Builds bridges between opposing viewpoints
-        - Suggests practical compromises or alternatives
-        - Identifies the strongest elements from each position
-        - Proposes next steps for resolution
-        
-        Focus on constructive integration rather than taking sides.
-        """
-        
-        response = await self.model_router.route_request(
-            prompt, {'task_type': 'reasoning', 'agent_role': 'refiner'}
-        )
-        
-        argument = self._parse_extended_argument(response, ExtendedDebateRole.REFINER, state)
-        state['arguments'].append(argument)
-        
-        return state
-```
+## Advanced Consensus Mechanisms
 
-### Dynamic Workflow Configuration
-```python
-class DynamicDebateWorkflow:
-    def __init__(self, base_debate, extended_agents):
-        self.base_debate = base_debate
-        self.extended_agents = extended_agents
-    
-    def create_adaptive_workflow(self, complexity_assessment: ComplexityAssessment) -> StateGraph:
-        """Create workflow adapted to complexity requirements"""
-        
-        workflow = StateGraph(DebateState)
-        
-        if complexity_assessment.recommended_agents == 5:
-            # Extended 5-agent workflow
-            workflow = self._create_extended_workflow(complexity_assessment.recommended_rounds)
-        else:
-            # Standard 3-agent workflow  
-            workflow = self.base_debate.create_debate_graph()
-        
-        return workflow
-    
-    def _create_extended_workflow(self, max_rounds: int) -> StateGraph:
-        """Create 5-agent extended debate workflow"""
-        
-        workflow = StateGraph(DebateState)
-        
-        # Phase 1: Parallel initial positions
-        workflow.add_node("proponent", self.base_debate._proponent_agent)
-        workflow.add_node("opponent", self.base_debate._opponent_agent)
-        workflow.add_node("advocate", self.extended_agents.advocate_agent)
-        workflow.add_node("critic", self.extended_agents.critic_agent)
-        
-        # Phase 2: Synthesis
-        workflow.add_node("refiner", self.extended_agents.refiner_agent)
-        
-        # Phase 3: Moderation
-        workflow.add_node("moderator", self.base_debate._moderator_agent)
-        
-        # Phase 4: Decision
-        workflow.add_node("final_decision", self.base_debate._finalize_decision)
-        
-        # Workflow edges
-        workflow.add_parallel(['proponent', 'opponent', 'advocate', 'critic'])
-        workflow.add_edge(['proponent', 'opponent', 'advocate', 'critic'], 'refiner')
-        workflow.add_edge('refiner', 'moderator')
-        
-        # Conditional continuation for multiple rounds
-        workflow.add_conditional_edges(
-            'moderator',
-            lambda state: self._should_continue_extended_debate(state, max_rounds),
-            {
-                'continue': 'proponent',
-                'conclude': 'final_decision'
-            }
-        )
-        
-        workflow.set_entry_point('proponent')
-        
-        return workflow.compile()
-    
-    def _should_continue_extended_debate(self, state: DebateState, max_rounds: int) -> str:
-        """Determine if extended debate should continue"""
-        
-        if state['current_round'] >= max_rounds:
-            return 'conclude'
-        
-        if state['consensus_reached']:
-            return 'conclude'
-        
-        # Check for diminishing returns
-        if state['current_round'] >= 2:
-            recent_quality = self._assess_recent_argument_quality(state)
-            if recent_quality < 0.6:  # Arguments not adding much value
-                return 'conclude'
-        
-        return 'continue'
-```
+### Weighted Decision Making
 
-### Performance Analysis and Optimization
-```python
-class ExtendedDebateAnalyzer:
-    def __init__(self):
-        self.quality_metrics = {
-            'argument_diversity': 0.0,
-            'reasoning_depth': 0.0,
-            'synthesis_quality': 0.0,
-            'decision_confidence': 0.0
-        }
-    
-    def analyze_extended_debate(self, debate_state: DebateState) -> Dict[str, float]:
-        """Analyze the quality and effectiveness of extended debate"""
-        
-        analysis = {}
-        
-        # Argument diversity - how many different perspectives were covered
-        analysis['argument_diversity'] = self._calculate_argument_diversity(
-            debate_state['arguments']
-        )
-        
-        # Reasoning depth - quality of analysis and evidence
-        analysis['reasoning_depth'] = self._calculate_reasoning_depth(
-            debate_state['arguments']
-        )
-        
-        # Synthesis quality - how well different views were integrated
-        synthesis_args = [arg for arg in debate_state['arguments'] 
-                         if arg.role == ExtendedDebateRole.REFINER]
-        analysis['synthesis_quality'] = self._evaluate_synthesis_quality(synthesis_args)
-        
-        # Decision confidence and justification
-        analysis['decision_confidence'] = debate_state.get('confidence_score', 0.5)
-        
-        # Cost-benefit analysis
-        analysis['cost_efficiency'] = self._calculate_cost_efficiency(
-            debate_state, analysis
-        )
-        
-        return analysis
-    
-    def _calculate_argument_diversity(self, arguments: List[DebateArgument]) -> float:
-        """Calculate diversity of perspectives and argument types"""
-        
-        if not arguments:
-            return 0.0
-        
-        # Count unique themes and perspectives
-        unique_themes = set()
-        for arg in arguments:
-            # Extract key themes (simplified)
-            themes = self._extract_argument_themes(arg.content)
-            unique_themes.update(themes)
-        
-        # Normalize by expected maximum diversity
-        max_expected_themes = 15  # Reasonable upper bound
-        diversity_score = min(len(unique_themes) / max_expected_themes, 1.0)
-        
-        return diversity_score
-    
-    def _calculate_reasoning_depth(self, arguments: List[DebateArgument]) -> float:
-        """Assess the depth and quality of reasoning"""
-        
-        if not arguments:
-            return 0.0
-        
-        depth_scores = []
-        
-        for arg in arguments:
-            # Assess various depth indicators
-            evidence_score = len(arg.supporting_evidence) / 5.0  # Normalize by expected max
-            length_score = min(len(arg.content) / 1000, 1.0)  # Longer tends to be deeper
-            confidence_score = arg.confidence
-            
-            # Combined depth score
-            depth = (evidence_score * 0.4 + length_score * 0.3 + confidence_score * 0.3)
-            depth_scores.append(min(depth, 1.0))
-        
-        return sum(depth_scores) / len(depth_scores)
-    
-    def compare_with_standard_debate(self, extended_result: Dict, 
-                                   standard_result: Dict) -> Dict[str, float]:
-        """Compare extended vs standard debate outcomes"""
-        
-        comparison = {
-            'quality_improvement': (
-                extended_result['reasoning_depth'] - 
-                standard_result.get('reasoning_depth', 0.5)
-            ),
-            'diversity_gain': (
-                extended_result['argument_diversity'] - 
-                standard_result.get('argument_diversity', 0.5)
-            ),
-            'confidence_improvement': (
-                extended_result['decision_confidence'] - 
-                standard_result.get('decision_confidence', 0.5)
-            ),
-            'cost_multiplier': extended_result.get('total_cost', 0) / max(
-                standard_result.get('total_cost', 1), 1
-            )
-        }
-        
-        return comparison
-```
+- **Expertise Weighting**: Higher weight for agents with relevant domain knowledge
+- **Confidence Scoring**: Factor in each agent's confidence in their assessment
+- **Evidence Quality**: Weight arguments based on supporting evidence strength
+- **Stakeholder Impact**: Consider breadth of impact on different user groups
 
-## Performance Targets
+### Multi-Criteria Evaluation
 
-| Metric | 3-Agent Baseline | 5-Agent Target | Improvement |
-|--------|------------------|----------------|-------------|
-| Reasoning Quality | 0.7 | 0.8 | +14% |
-| Decision Confidence | 0.75 | 0.85 | +13% |
-| Argument Diversity | 0.6 | 0.8 | +33% |
-| Complex Task Success | 70% | 80% | +10% |
-| Cost per Decision | $0.50 | $1.25 | 2.5x |
+- **Technical Merit**: Code quality, performance, maintainability
+- **Business Value**: User impact, development velocity, cost implications
+- **Risk Assessment**: Security, reliability, and operational considerations
+- **Implementation Feasibility**: Timeline, resource requirements, complexity
 
-## Usage Guidelines
+### Conflict Resolution
 
-### When to Use Extended Debate
+- **Structured Negotiation**: Formal process for resolving disagreements
+- **Evidence-Based Resolution**: Require supporting data for contentious points
+- **Compromise Identification**: Find middle-ground solutions when possible
+- **Escalation Protocols**: Human expert involvement for unresolved conflicts
 
-- **Architecture decisions** with multiple technical approaches
+## Success Criteria
 
-- **Resource allocation** decisions affecting multiple teams
+### Decision Quality Improvements
 
-- **Strategic planning** with long-term implications
+- **Complex Decision Accuracy**: 50% improvement over 3-agent baseline for high-complexity scenarios
+- **Stakeholder Satisfaction**: >90% approval rate from affected parties
+- **Risk Identification**: 60% improvement in identifying potential failure modes
+- **Solution Robustness**: 40% fewer production issues from 5-agent validated decisions
+- **Comprehensive Analysis**: 80% of decisions include multi-perspective evaluation
 
-- **Cross-functional initiatives** requiring diverse expertise
+### Performance Targets
 
-- **High-stakes decisions** with significant downside risk
+- **Debate Latency**: <180s for complete 5-agent debate (3 rounds maximum)
+- **Parallel Efficiency**: 40% time reduction through parallel initial phases
+- **Consensus Rate**: 75% of debates reach consensus within 3 rounds
+- **Escalation Rate**: <5% of debates require human expert intervention
+- **Resource Efficiency**: <5x cost overhead vs single-agent decisions
 
-### When to Use Standard Debate
+### Process Quality Metrics
 
-- **Implementation details** within established architecture
+- **Perspective Coverage**: 95% of relevant stakeholder viewpoints represented
+- **Evidence Quality**: >85% of arguments supported by verifiable evidence
+- **Bias Mitigation**: <3% bias incidents across all agent perspectives
+- **Decision Confidence**: >85% average confidence in final decisions
+- **Time Management**: 95% of debates complete within allocated time windows
 
-- **Routine operational decisions** with clear precedent
+### Coordination Effectiveness
 
-- **Simple feature specifications** with limited scope
+- **Role Specialization**: 90% appropriate expertise assignment for domain-specific decisions
+- **Parallel Processing**: 50% efficiency gain through simultaneous argument development
+- **Conflict Resolution**: 95% successful resolution of agent disagreements
+- **Moderator Effectiveness**: 90% agreement with expert review of synthesis quality
 
-- **Quick technical choices** with reversible outcomes
+## Implementation Strategy
 
-## Cost Management
+### Phase 2A: 5-Agent Foundation (Week 1-3)
 
-### Smart Triggering
-```python
-class DebateCostManager:
-    def __init__(self):
-        self.daily_budget = 50.0  # $50/day for all debates
-        self.extended_debate_cost = 1.25  # $1.25 per extended debate
-        self.standard_debate_cost = 0.50  # $0.50 per standard debate
-        self.current_usage = 0.0
-    
-    def should_use_extended_debate(self, complexity_score: float, 
-                                 topic_importance: str) -> bool:
-        """Cost-aware decision on debate type"""
-        
-        # Check budget
-        if self.current_usage + self.extended_debate_cost > self.daily_budget:
-            return False
-        
-        # High importance always gets extended debate
-        if topic_importance == 'critical':
-            return True
-        
-        # Use complexity threshold
-        if complexity_score > 0.8:
-            return True
-        elif complexity_score > 0.7 and topic_importance == 'high':
-            return True
-        
-        return False
-```
+- Implement extended agent roles with domain specialization
+- Add parallel processing capabilities for initial argument phase
+- Test with medium-complexity architectural decisions
 
-## Related Decisions
+### Phase 2B: Advanced Coordination (Week 4-6)
 
-- ADR-009: Debate Agents (Phase 1)
+- Implement sophisticated consensus mechanisms and weighted voting
+- Add dynamic role assignment based on decision domain
+- Test with high-complexity system design decisions
 
-- ADR-008: Multi-Model Routing
+### Phase 2C: Production Integration (Week 7-9)
 
-- ADR-001: Multi-Agent Framework Selection
+- Integrate extended debate triggers into main orchestration system
+- Add comprehensive monitoring and quality assessment
+- Performance optimization and capacity planning
 
-## Monitoring
+### Future Enhancements
 
-- Extended vs standard debate quality comparisons
-
-- Cost-benefit analysis per decision type
-
-- User satisfaction with complex decision outcomes
-
-- Agent coordination efficiency in 5-agent mode
-
-- Optimal complexity threshold calibration
+- Machine learning-based role assignment optimization
+- Dynamic debate structure adaptation based on decision characteristics
+- Integration with domain-specific knowledge bases for enhanced expertise

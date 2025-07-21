@@ -1,221 +1,128 @@
 # ADR-003: Tool Integration Protocol
 
-**Status**: Accepted  
+**Status**: Accepted
 
-**Date**: 2025-07-20  
+**Context**: CodeForge AI needs low-latency tool integration for Phase 1 core functionality, with extensibility for Phase 2 advanced tools like vision SDK. Must balance direct performance with customization needs while maintaining minimal overhead for frequently used operations. Core database operations require <10ms latency while custom tools can tolerate higher latency.
 
-**Deciders**: CodeForge AI Team  
+**Decision**: Direct SDKs for core tools (qdrant-client v1.15.0+, neo4j v5.28.1+, redis v6.0.0+) in Phase 1, MCP for custom integrations, extend with openai SDK v1.97.0+ for Phase 2 vision.
 
-## Context
+**Consequences**:
 
-Latency/extensibility for tools in Phase 1, extend to Phase 2 advanced (e.g., vision SDK). The system needs to balance direct performance with custom tool integration across both phases while maintaining low latency and high extensibility.
+- Positive: Low latency for critical operations, easy Phase 2 extensions, proven SDK reliability, optimal performance for core database and model operations, consistent error handling
+- Negative: Mixed integration patterns increase complexity, need to maintain both SDK and MCP integrations, different debugging approaches per tool type
 
-## Problem Statement
+## Architecture Overview
 
-Balance direct performance with custom integration in phases. Requirements include:
+### Dual Integration Strategy
 
-- Low-latency access to core tools
+- **Core SDK Tools**: Direct integration for database operations and critical services
+- **MCP Tools**: Model Context Protocol for external services and custom integrations
+- **Performance Tiering**: Different latency budgets based on tool criticality
+- **Unified Interface**: Consistent tool interface despite different underlying protocols
 
-- Extensibility for custom tool development
+### Core Tool Requirements
 
-- Integration with existing codebase tools
+- **Qdrant**: Vector operations with <50ms latency budget
+- **Neo4j**: Graph queries with <100ms latency budget  
+- **Redis**: Cache operations with <10ms latency budget
+- **OpenRouter**: Model routing with <2000ms acceptable latency
+- **Web Search**: Tavily/Exa with <2000ms latency tolerance
 
-- Future support for advanced tools (vision, federated)
+### Tool Management Framework
 
-- Minimal overhead for frequently used operations
+- **Connection Pooling**: Optimized connection management per tool type
+- **Health Monitoring**: Continuous tool availability checking
+- **Automatic Retry**: Intelligent retry with exponential backoff
+- **Circuit Breakers**: Prevent cascade failures from tool unavailability
+- **Performance Tracking**: Real-time latency and success rate monitoring
 
-## Decision
+## Phase 2 Extensions
 
-**Direct SDKs** for core in Phase 1 (e.g., qdrant-client); **MCP for custom**; extend to Phase 2 with openai SDK for vision.
+### Vision Tool Integration
 
-## Alternatives Considered
+- **OpenAI SDK v1.97.0+**: GPT-4V for image analysis and UI understanding
+- **CLIP Embeddings**: Multi-modal search capabilities
+- **Advanced Scraping**: ZenRows for complex web content extraction
+- **Performance Targets**: <5s for complex vision tasks, <30s timeout
 
-| Approach | Pros | Cons | Score |
-|----------|------|------|-------|
-| **Direct SDKs + MCP** | Low latency for core, extensible for custom | Mixed integration patterns | **8.5** |
-| All MCP | Consistent interface, easy extension | Latency overhead for all operations | 7.0 |
-| All Direct SDKs | Maximum performance | Limited extensibility, custom tool burden | 7.8 |
-| Custom Wrapper Layer | Unified interface, controllable | Development overhead, maintenance burden | 7.2 |
+### MCP Ecosystem Expansion
 
-## Rationale
+- **Custom Tools**: Domain-specific integrations via MCP protocol
+- **Third-Party Services**: API integrations through standardized MCP interface
+- **Tool Discovery**: Dynamic tool registration and capability negotiation
+- **Version Management**: Backward compatibility and graceful upgrades
 
-- **Low load/high performance (8.5)**: Direct access for frequently used tools
+### Implementation Architecture
 
-- **Easy Phase 2 addition**: Natural extension points for vision and federated tools
-
-- **Best of both worlds**: Performance where needed, flexibility where useful
-
-- **Codebase integration**: Leverage existing tool wrappers
-
-## Consequences
-
-### Positive
-
-- Optimal performance for core database and model operations
-
-- Easy integration of specialized tools through MCP
-
-- Clear separation between performance-critical and extensible tools
-
-- Future-proof for Phase 2 advanced capabilities
-
-### Negative
-
-- Mixed integration patterns increase complexity
-
-- Need to maintain both SDK and MCP integration paths
-
-- Potential for inconsistent error handling across tools
-
-### Neutral
-
-- Wrappers needed for codebase integration in Phase 1
-
-- Toggle vision capabilities in Phase 2
-
-## Implementation Notes
-
-### Core Tools (Direct SDK)
-```python
-
-# High-frequency, performance-critical tools
-from qdrant_client import QdrantClient
-from neo4j import GraphDatabase
-import redis
-from openrouter import OpenRouter
-
-class CoreTools:
-    def __init__(self):
-        self.qdrant = QdrantClient("localhost", port=6333)
-        self.neo4j = GraphDatabase.driver("bolt://localhost:7687")
-        self.redis = redis.Redis(host='localhost', port=6379)
-        self.router = OpenRouter(api_key=os.getenv("OPENROUTER_API_KEY"))
+```pseudocode
+ToolIntegrationManager {
+  coreSDKTools: Map<ToolName, SDKInstance>
+  mcpTools: Map<ToolName, MCPClient>
+  performanceMetrics: ToolMetrics
+  
+  executeOperation(toolName, operation, params) -> Result {
+    tool = getToolInstance(toolName)
     
-    async def vector_search(self, query_vector, limit=10):
-        return await self.qdrant.search(
-            collection_name="knowledge",
-            query_vector=query_vector,
-            limit=limit
-        )
+    startTime = now()
+    result = tool.execute(operation, params)
+    executionTime = now() - startTime
+    
+    trackPerformance(toolName, executionTime)
+    validateLatencyBudget(toolName, executionTime)
+    
+    return result
+  }
+}
+
+PerformanceMonitoring {
+  latencyBudgets: Map<ToolName, Milliseconds>
+  healthChecks: ScheduledChecks
+  circuitBreakers: FailureProtection
+  
+  // Continuous monitoring and alerting
+}
 ```
 
-### Custom Tools (MCP)
-```python
+## Success Criteria
 
-# Extensible tools through MCP
-from mcp_client import MCPClient
+### Performance Targets
 
-class CustomTools:
-    def __init__(self):
-        self.mcp_client = MCPClient()
-    
-    async def tree_sitter_analysis(self, code, language):
-        return await self.mcp_client.call_tool(
-            "tree_sitter_analyze",
-            {"code": code, "language": language}
-        )
-    
-    async def git_operations(self, repo_path, operation):
-        return await self.mcp_client.call_tool(
-            "git_operation",
-            {"path": repo_path, "operation": operation}
-        )
-```
+- **Core SDK Latency**: Qdrant <50ms, Neo4j <100ms, Redis <10ms
+- **Tool Availability**: >99% uptime for core tools, >95% for MCP tools
+- **Connection Efficiency**: Connection pool utilization >70%, <20 concurrent connections per tool
+- **Error Recovery**: <5% failed operations, automatic retry success rate >90%
+- **Throughput**: 1000+ tool operations per minute sustained load
 
-### Tool Registry
-```python
-class ToolRegistry:
-    def __init__(self):
-        self.core_tools = CoreTools()
-        self.custom_tools = CustomTools()
-        self.phase2_tools = Phase2Tools()  # Vision, federated
-    
-    async def route_tool_call(self, tool_name, **kwargs):
-        if tool_name in self.CORE_TOOLS:
-            return await getattr(self.core_tools, tool_name)(**kwargs)
-        elif tool_name in self.CUSTOM_TOOLS:
-            return await self.custom_tools.call_tool(tool_name, kwargs)
-        elif tool_name in self.PHASE2_TOOLS:
-            return await getattr(self.phase2_tools, tool_name)(**kwargs)
-        else:
-            raise ToolNotFoundError(f"Tool {tool_name} not registered")
-```
+### Integration Quality
 
-## Tool Categories
+- **SDK Version Alignment**: All core SDKs match pyproject.toml versions exactly
+- **MCP Compatibility**: Support for standard MCP protocol with fallback mechanisms
+- **Extension Readiness**: Phase 2 vision tools integrate with <1 day development time
+- **Unified Interface**: Consistent API regardless of underlying tool protocol
 
-### Phase 1 Core Tools (Direct SDK)
+### Operational Metrics
 
-- **Database Operations**: Qdrant, Neo4j, Redis
+- **Health Check Success**: >98% successful health checks across all tools
+- **Resource Utilization**: <50% CPU overhead for tool management layer
+- **Memory Efficiency**: <200MB total overhead for all tool connections
+- **Monitoring Coverage**: 100% of tool operations tracked with metrics
 
-- **Model Routing**: OpenRouter API
+## Implementation Strategy
 
-- **Basic File Operations**: Standard library
+### Phase 1A: Core SDK Integration (Week 1-2)
 
-- **HTTP Requests**: httpx for web search APIs
+- Implement direct SDK integrations for Qdrant, Neo4j, Redis
+- Establish connection pooling and performance monitoring
+- Validate latency targets with load testing
 
-### Phase 1 Custom Tools (MCP)
+### Phase 1B: MCP Tool Integration (Week 3-4)
 
-- **Code Analysis**: tree-sitter parsing
+- Add MCP adapter for web search tools (Tavily, Exa)
+- Implement health checking and retry mechanisms
+- Test hybrid SDK + MCP workflows under realistic load
 
-- **Git Operations**: libgit2 wrappers
+### Phase 1C: Production Hardening (Week 5-6)
 
-- **Search Tools**: Tavily, Exa integrations
-
-- **Custom Analyzers**: Domain-specific tools
-
-### Phase 2 Advanced Tools (Direct SDK)
-
-- **Vision Processing**: OpenAI SDK for CLIP
-
-- **Federated Learning**: Flower framework
-
-- **Advanced Scraping**: ZenRows for deep web access
-
-- **Kubernetes**: K8s client for orchestration
-
-## Performance Expectations
-
-| Tool Category | Latency Target | Throughput Target |
-|---------------|----------------|-------------------|
-| Core SDK | <10ms | 1000+ req/s |
-| Custom MCP | <50ms | 100+ req/s |
-| Phase 2 Vision | <200ms | 50+ req/s |
-| Phase 2 Federated | <500ms | 10+ req/s |
-
-## Error Handling Strategy
-
-```python
-class ToolError(Exception):
-    def __init__(self, tool_name, operation, error_details):
-        self.tool_name = tool_name
-        self.operation = operation
-        self.error_details = error_details
-        super().__init__(f"Tool {tool_name} failed on {operation}: {error_details}")
-
-async def safe_tool_call(tool_func, *args, **kwargs):
-    try:
-        return await tool_func(*args, **kwargs)
-    except Exception as e:
-        logger.error(f"Tool call failed: {tool_func.__name__}", exc_info=True)
-        raise ToolError(tool_func.__name__, "execution", str(e))
-```
-
-## Related Decisions
-
-- ADR-002: Database and Memory System
-
-- ADR-006: SOTA GraphRAG Implementation
-
-- ADR-011: Multi-Modal Support (Phase 2)
-
-## Monitoring
-
-- Tool execution latencies by category
-
-- Error rates and failure patterns
-
-- MCP vs Direct SDK performance comparison
-
-- Resource utilization per tool type
-
-- Phase 2 tool adoption metrics
+- Add comprehensive error handling and circuit breakers
+- Implement automated performance reporting and alerting
+- Prepare Phase 2 extension points and vision tool architecture

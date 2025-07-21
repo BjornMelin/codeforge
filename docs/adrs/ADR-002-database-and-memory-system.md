@@ -1,166 +1,130 @@
 # ADR-002: Database and Memory System
 
-**Status**: Accepted  
+**Status**: Accepted
 
-**Date**: 2025-07-20  
+**Context**: CodeForge AI needs scalable memory architecture for RAG and state management in Phase 1, extensible to Phase 2 multi-modal and federated requirements. Must balance local deployment with accuracy gains while maintaining cost efficiency. Requires graph-based knowledge representation, vector similarity search, and fast caching with 30% accuracy improvement over baseline RAG.
 
-**Deciders**: CodeForge AI Team  
+**Decision**: Hybrid architecture using Neo4j v5.28.1+ (graphs) + Qdrant v1.15.0+ (vectors) + Redis v6.0.0+ (Pub/Sub/caching) in Phase 1, with SQLite toggle for lightweight deployments.
 
-## Context
+**Consequences**:
 
-Scalable memory for RAG/state in Phase 1, extend to Phase 2 multi-modal/federated. The system needs to balance local deployment with accuracy requirements while supporting graph-based knowledge representation and vector similarity search.
+- Positive: Enables GraphRAG+ with 30% accuracy boost, supports both graph and vector operations, flexible deployment options, best performance for each data type, proven scalability
+- Negative: Multiple services increase deployment complexity, higher resource requirements, synchronization overhead between systems
 
-## Problem Statement
+## Architecture Overview
 
-Balance local/low-cost with accuracy across phases. Requirements include:
+### Multi-Database Strategy
 
-- Graph-based knowledge representation for entities and relationships
+- **Neo4j (Graph Database)**: Code relationships, dependencies, architectural patterns
+- **Qdrant (Vector Database)**: Semantic embeddings with content-aware dimensions
+- **Redis (Cache/PubSub)**: Fast caching, agent coordination, task queues
+- **SQLite (Lightweight Mode)**: Simplified deployment for resource-constrained environments
 
-- Vector similarity search for semantic retrieval
+### Data Storage Patterns
 
-- Fast caching and pub/sub for real-time coordination
+- **Code Entities**: Functions, classes, modules as graph nodes with vector embeddings
+- **Relationships**: Function calls, imports, inheritance as graph edges
+- **Embeddings**: BGE-M3 with int8 quantization (384D code, 768D docs, 256D functions)
+- **Cache Strategy**: Hierarchical caching with TTL management and invalidation patterns
 
-- Extensibility for federated learning in Phase 2
+### Deployment Flexibility
 
-- Local deployment option for cost control
+- **Full Mode**: All three databases for maximum performance and accuracy
+- **Lightweight Mode**: SQLite + in-memory Qdrant for minimal resource usage
+- **Auto-Fallback**: Automatic degradation to lightweight mode if services unavailable
+- **Horizontal Scaling**: Redis Cluster support for Phase 2 distributed deployments
 
-## Decision
+## GraphRAG+ Integration
 
-**Hybrid**: Neo4j (graphs) + Qdrant (vectors) + Redis (Pub/Sub/caching) in Phase 1, toggle SQLite; extend to Phase 2 with federated local aggregation.
+### Hybrid Search Architecture
 
-## Alternatives Considered
+- **Vector Similarity**: Semantic search across code and documentation
+- **Graph Traversal**: Multi-hop relationship exploration (2-3 hops)
+- **Result Fusion**: Weighted combination of vector and graph scores
+- **Query Expansion**: Graph relationships inform search scope
 
-| Solution | Pros | Cons | Score |
-|----------|------|------|-------|
-| **Neo4j + Qdrant + Redis** | Best-in-class for each use case, proven scalability | Multiple services, setup complexity | **8.7** |
-| Pure Qdrant | Single service, good vector search | No native graph capabilities, limited relationship modeling | 7.5 |
-| RaimaDB (embedded) | Single embedded solution | Overkill complexity, licensing costs | 7.0 |
-| SQLite + pgvector | Lightweight, single file | Limited scalability, no native graph support | 7.2 |
+### Performance Optimization
 
-## Rationale
+- **Embedding Quantization**: int8 reduces memory usage by 75% with minimal accuracy loss
+- **Connection Pooling**: Optimized database connections for concurrent access
+- **Batch Operations**: Efficient bulk updates and queries
+- **Cache Warming**: Proactive caching of frequently accessed data
 
-- **Enables GraphRAG+ (8.7)**: 30% accuracy boost in Phase 1
+### Implementation Architecture
 
-- **Specialized tools**: Each database optimized for its use case
-
-- **Scalable to Phase 2**: Natural extension to federated architectures
-
-- **Local option**: SQLite toggle for cost-sensitive deployments
-
-## Consequences
-
-### Positive
-
-- Best performance for each data type (graph, vector, cache)
-
-- GraphRAG+ capabilities with entity relationship modeling
-
-- High scalability for Phase 2 requirements
-
-- Flexible deployment options
-
-### Negative
-
-- Multiple services increase deployment complexity
-
-- Higher resource requirements than single-database solutions
-
-- Need for service coordination and health monitoring
-
-### Neutral
-
-- Docker Compose required for Phase 1 setup
-
-- Add Flower integration for Phase 2 federated capabilities
-
-## Implementation Notes
-
-### Phase 1 Setup
-```python
-
-# Database connections
-neo4j_driver = GraphDatabase.driver("bolt://localhost:7687")
-qdrant_client = QdrantClient("localhost", port=6333)
-redis_client = redis.Redis(host='localhost', port=6379)
-
-# GraphRAG+ integration
-class HybridRAG:
-    def __init__(self):
-        self.graph_db = neo4j_driver
-        self.vector_db = qdrant_client
-        self.cache = redis_client
+```pseudocode
+DatabaseManager {
+  graphDB: Neo4j
+  vectorDB: Qdrant  
+  cacheDB: Redis
+  lightweightMode: Boolean
+  
+  storeCodeKnowledge(codeData) {
+    relationships = extractRelationships(codeData)
+    graphDB.store(relationships)
     
-    def retrieve(self, query):
-        # Hybrid graph + vector retrieval
-        entities = self.extract_entities(query)
-        graph_context = self.graph_db.run(cypher_query, entities=entities)
-        vector_results = self.vector_db.search(query_vector)
-        return self.fusion_rank(graph_context, vector_results)
-```
-
-### Docker Compose Configuration
-```yaml
-services:
-  neo4j:
-    image: neo4j:5.15
-    environment:
-      NEO4J_AUTH: neo4j/password
-    ports:
-      - "7474:7474"
-      - "7687:7687"
+    embedding = BGE-M3.encode(codeData, quantize=int8)
+    vectorDB.store(embedding)
+    
+    cacheDB.invalidate(relatedKeys)
+  }
   
-  qdrant:
-    image: qdrant/qdrant:v1.7.3
-    ports:
-      - "6333:6333"
+  hybridSearch(query) -> Results {
+    vector_results = vectorDB.search(query.embedding)
+    graph_results = graphDB.traverse(vector_results.topK(5))
+    return fuseResults(vector_results, graph_results, weights=[0.7, 0.3])
+  }
+}
+
+LightweightFallback {
+  sqliteDB: SQLite
+  memoryVectorDB: Qdrant(":memory:")
   
-  redis:
-    image: redis:7.2-alpine
-    ports:
-      - "6379:6379"
+  // Simplified operations for resource-constrained deployments
+}
 ```
 
-## Data Flow Architecture
+## Success Criteria
 
-```mermaid
-graph TB
-    A[User Query] --> B[GraphRAG+ Pipeline]
-    B --> C[Entity Extraction]
-    B --> D[Vector Embedding]
-    C --> E[Neo4j Graph Query]
-    D --> F[Qdrant Vector Search]
-    E --> G[Fusion Ranking]
-    F --> G
-    G --> H[Redis Cache]
-    H --> I[LangGraph State]
-    I --> J[Agent Response]
-```
+### Performance Targets
 
-## Performance Targets
+- **Search Accuracy**: 30% improvement over baseline RAG (target: 85% relevance score)
+- **Query Latency**: <500ms for hybrid search (vector + graph traversal)
+- **Embedding Storage**: <2GB for 10K code files with efficient quantization
+- **Cache Hit Rate**: >70% for repeated queries
+- **Memory Usage**: <1GB total for database connections and caches
 
-| Metric | Phase 1 Target | Phase 2 Target |
-|--------|----------------|----------------|
-| Query Latency | <100ms | <150ms (with multi-modal) |
-| Accuracy Improvement | +30-40% | +50-60% (cumulative) |
-| Cache Hit Rate | >80% | >85% |
-| Concurrent Users | 10 | 100+ |
+### Reliability Metrics
 
-## Related Decisions
+- **Database Uptime**: >99.5% availability for full mode
+- **Data Consistency**: Zero data loss during normal operations
+- **Failover Time**: <30s to lightweight mode if full mode fails
+- **Backup Success**: Daily automated backups with <5 minute recovery time
+- **Concurrent Access**: Support 50+ simultaneous queries without degradation
 
-- ADR-006: SOTA GraphRAG Implementation
+### Deployment Metrics
 
-- ADR-005: Caching and Shared Context Layer
+- **Resource Efficiency**: <4GB RAM for full mode, <1GB for lightweight mode
+- **Startup Time**: <2 minutes for full initialization
+- **Auto-Recovery**: 95% success rate for automatic service recovery
+- **Scaling Readiness**: Phase 2 federated support with minimal architectural changes
 
-- ADR-010: Task Management System
+## Implementation Strategy
 
-## Monitoring
+### Phase 1A: Core Database Setup (Week 1-2)
 
-- Database connection health checks
+- Deploy Neo4j, Qdrant, Redis stack with basic configuration
+- Implement basic GraphRAG+ with vector + graph hybrid search
+- Validate 30% accuracy improvement over baseline RAG
 
-- Query performance metrics
+### Phase 1B: Performance Optimization (Week 3-4)
 
-- Cache hit/miss ratios
+- Add caching layer and optimize query patterns
+- Implement automatic lightweight mode fallback
+- Load testing and memory optimization for target metrics
 
-- Storage utilization tracking
+### Phase 1C: Production Hardening (Week 5-6)
 
-- Cross-service latency monitoring
+- Add comprehensive monitoring and alerting
+- Implement automated backup and recovery procedures
+- Documentation and operational runbooks for deployment

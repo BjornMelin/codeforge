@@ -1,585 +1,174 @@
 # ADR-010: Task Management System
 
-**Status**: Accepted  
+**Status**: Accepted
 
-**Date**: 2025-07-20  
+**Context**: CodeForge AI requires sophisticated task coordination for multi-agent workflows in Phase 1, managing dependencies, priorities, and agent assignments efficiently. Must support complex workflows while maintaining low latency and high reliability for autonomous development processes.
 
-**Deciders**: CodeForge AI Team  
+**Decision**: LangGraph v0.5.3+ StateGraph with Redis v6.0.0+ Pub/Sub for persistent coordination, using priority queues and dependency resolution for optimal task distribution.
 
-## Context
+**Consequences**:
 
-Low-latency coordination in Phase 1, scale to Phase 2 extended agents. The system needs efficient task distribution, progress tracking, and coordination mechanisms that can handle increasing agent complexity while maintaining high performance.
+- Positive: Efficient task distribution, automatic dependency management, persistent state across restarts, scalable to Phase 2 requirements, built-in workflow orchestration
+- Negative: Increased infrastructure complexity, Redis dependency, need for sophisticated coordination logic
 
-## Problem Statement
+## Architecture Overview
 
-Provide efficient task coordination and management across phases. Requirements include:
+### Task Lifecycle Management
 
-- Low-latency task assignment and updates
+- **Submission**: Validate, prioritize, and queue new tasks with dependency analysis
+- **Scheduling**: Intelligent assignment based on agent capabilities and current load
+- **Execution**: Monitor progress with timeout management and health checks
+- **Completion**: Results validation, dependency resolution, and cleanup
+- **Failure Handling**: Automatic retry with exponential backoff and escalation
 
-- Reliable task persistence and recovery
+### Priority and Dependency System
 
-- Scalable coordination for growing agent populations
+- **Priority Levels**: Critical, High, Normal, Low with queue jumping for emergencies
+- **Dependency Resolution**: Automatic activation when prerequisites complete
+- **Parallel Execution**: Maximum parallelization while respecting dependencies
+- **Deadline Management**: SLA tracking and escalation for time-critical tasks
 
-- Integration with debate and routing systems
+### Agent Coordination Strategy
 
-- Support for complex task dependencies
+- **Capability Matching**: Assign tasks to agents with appropriate skills
+- **Load Balancing**: Distribute work evenly across available agents
+- **Health Monitoring**: Track agent performance and availability
+- **Dynamic Scaling**: Add/remove agents based on queue depth and demand
 
-## Decision
+## Task Distribution Architecture
 
-**Hybrid in-memory (deque in StateGraph) + Redis Pub/Sub/checkpointers** in Phase 1; extend to Phase 2 with federated task aggregation (Flower for privacy).
+### Queue Management
 
-## Alternatives Considered
+- **Multi-Priority Queues**: Separate queues for different priority levels
+- **Round-Robin with Weights**: Balanced serving across priority levels
+- **Starvation Prevention**: Ensure low-priority tasks eventually execute
+- **Batch Processing**: Group related tasks for efficiency
 
-| Approach | Pros | Cons | Score |
-|----------|------|------|-------|
-| **Hybrid In-Memory + Redis** | Low latency, persistent, scalable | Setup complexity, sync overhead | **8.6** |
-| Pure In-Memory | Maximum speed, simple | No persistence, restart issues | 8.4 |
-| Pure CLI coordination | Simple, direct control | High overhead, poor scalability | 7.5 |
-| Database-only queue | Persistent, transactional | Higher latency, complex queries | 7.8 |
+### Coordination Mechanisms
 
-## Rationale
+- **Pub/Sub Notifications**: Real-time task assignment and status updates
+- **Distributed Locking**: Prevent race conditions in task assignment
+- **Heartbeat Monitoring**: Detect failed agents and reassign tasks
+- **State Synchronization**: Maintain consistency across distributed components
 
-- **+30% efficiency improvement (8.6)**: Measured coordination gains in Phase 1
+### Implementation Architecture
 
-- **Phase 1 optimal balance**: Speed with reliability
-
-- **Phase 2 privacy-ready**: Federated aggregation support
-
-- **Framework integration**: Natural fit with LangGraph StateGraph
-
-## Consequences
-
-### Positive
-
-- Optimal performance for high-frequency task operations
-
-- Reliable task persistence across system restarts
-
-- Efficient coordination between agents
-
-- Strong foundation for Phase 2 federated architectures
-
-### Negative
-
-- Increased system complexity with multiple data stores
-
-- Synchronization overhead between in-memory and persistent storage
-
-- Need for conflict resolution in concurrent access scenarios
-
-### Neutral
-
-- Sync throttling mechanisms in Phase 1
-
-- Flower integration for Phase 2 federated privacy
-
-## Implementation Notes
-
-### Task State Management
-```python
-from collections import deque
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, field
-from enum import Enum
-import asyncio
-import time
-import json
-
-class TaskStatus(Enum):
-    PENDING = "pending"
-    ASSIGNED = "assigned"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-class TaskPriority(Enum):
-    CRITICAL = 1
-    HIGH = 2
-    MEDIUM = 3
-    LOW = 4
-
-@dataclass
-class Task:
-    task_id: str
-    task_type: str
-    description: str
-    priority: TaskPriority
-    status: TaskStatus = TaskStatus.PENDING
-    assigned_agent: Optional[str] = None
-    dependencies: List[str] = field(default_factory=list)
-    context: Dict[str, Any] = field(default_factory=dict)
-    created_at: float = field(default_factory=time.time)
-    started_at: Optional[float] = None
-    completed_at: Optional[float] = None
-    result: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
-    retry_count: int = 0
-    max_retries: int = 3
-
-class TaskManager:
-    def __init__(self, redis_client, state_graph):
-        self.redis_client = redis_client
-        self.state_graph = state_graph
-        
-        # In-memory queues for fast access
-        self.priority_queues = {
-            priority: deque() for priority in TaskPriority
-        }
-        
-        # Task tracking
-        self.active_tasks: Dict[str, Task] = {}
-        self.agent_assignments: Dict[str, List[str]] = {}
-        
-        # Coordination
-        self.task_locks: Dict[str, asyncio.Lock] = {}
-        self.sync_interval = 5.0  # seconds
-        self.last_sync = time.time()
-        
-        # Start background sync
-        asyncio.create_task(self._background_sync())
+```pseudocode
+TaskCoordinator {
+  priorityQueues: Map<Priority, TaskQueue>
+  dependencyGraph: DependencyResolver
+  agentPool: AgentManager
+  persistentStore: RedisStore
+  
+  submitTask(task) -> TaskID {
+    validatedTask = validateTask(task)
+    resolveDependencies(validatedTask)
     
-    async def submit_task(self, task: Task) -> str:
-        """Submit a new task to the system"""
-        
-        # Add to in-memory queue for fast access
-        self.priority_queues[task.priority].append(task)
-        self.active_tasks[task.task_id] = task
-        
-        # Persist to Redis
-        await self._persist_task(task)
-        
-        # Notify agents via pub/sub
-        await self.redis_client.publish(
-            'task_notifications',
-            json.dumps({
-                'action': 'new_task',
-                'task_id': task.task_id,
-                'task_type': task.task_type,
-                'priority': task.priority.value
-            })
-        )
-        
-        return task.task_id
+    queue = priorityQueues[task.priority]
+    queue.enqueue(validatedTask)
     
-    async def claim_task(self, agent_id: str, task_types: List[str] = None) -> Optional[Task]:
-        """Claim the next available task for an agent"""
-        
-        # Check each priority level
-        for priority in TaskPriority:
-            queue = self.priority_queues[priority]
-            
-            # Find suitable task
-            for i, task in enumerate(queue):
-                if (task.status == TaskStatus.PENDING and
-                    self._can_assign_task(task, agent_id, task_types)):
-                    
-                    # Remove from queue
-                    queue.remove(task)
-                    
-                    # Assign to agent
-                    task.status = TaskStatus.ASSIGNED
-                    task.assigned_agent = agent_id
-                    task.started_at = time.time()
-                    
-                    # Update tracking
-                    if agent_id not in self.agent_assignments:
-                        self.agent_assignments[agent_id] = []
-                    self.agent_assignments[agent_id].append(task.task_id)
-                    
-                    # Persist changes
-                    await self._persist_task(task)
-                    
-                    return task
-        
-        return None
+    persistentStore.save(validatedTask)
+    notifyAvailableAgents(validatedTask)
     
-    async def update_task_status(self, task_id: str, status: TaskStatus, 
-                               result: Optional[Dict] = None, 
-                               error: Optional[str] = None) -> bool:
-        """Update task status and result"""
-        
-        if task_id not in self.active_tasks:
-            return False
-        
-        task = self.active_tasks[task_id]
-        
-        # Update task state
-        task.status = status
-        if result:
-            task.result = result
-        if error:
-            task.error = error
-        
-        if status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
-            task.completed_at = time.time()
-            
-            # Remove from agent assignments
-            if task.assigned_agent and task.assigned_agent in self.agent_assignments:
-                if task_id in self.agent_assignments[task.assigned_agent]:
-                    self.agent_assignments[task.assigned_agent].remove(task_id)
-        
-        # Persist changes
-        await self._persist_task(task)
-        
-        # Notify completion
-        await self.redis_client.publish(
-            'task_notifications',
-            json.dumps({
-                'action': 'task_updated',
-                'task_id': task_id,
-                'status': status.value,
-                'agent_id': task.assigned_agent
-            })
-        )
-        
-        return True
+    return validatedTask.id
+  }
+  
+  assignNextTask(agentID) -> Task {
+    agent = agentPool.getAgent(agentID)
+    
+    for priority in [CRITICAL, HIGH, NORMAL, LOW] {
+      task = findCompatibleTask(agent, priorityQueues[priority])
+      if (task && canExecute(task)) {
+        assignTaskToAgent(task, agent)
+        return task
+      }
+    }
+    
+    return null
+  }
+}
+
+DependencyResolver {
+  dependencyGraph: DirectedAcyclicGraph
+  waitingTasks: Map<TaskID, Task>
+  
+  resolveDependencies(task) -> ResolutionResult
+  checkCompletion(completedTaskID) -> List<ActivatedTasks>
+  validateNoCycles(newTask) -> ValidationResult
+}
 ```
 
-### Task Dependencies and Workflow
-```python
-class TaskDependencyManager:
-    def __init__(self, task_manager: TaskManager):
-        self.task_manager = task_manager
-        self.dependency_graph: Dict[str, List[str]] = {}
-        self.waiting_tasks: Dict[str, List[str]] = {}
-    
-    async def add_task_with_dependencies(self, task: Task, dependencies: List[str]) -> str:
-        """Add task with dependency constraints"""
-        
-        task.dependencies = dependencies
-        self.dependency_graph[task.task_id] = dependencies
-        
-        # Check if all dependencies are met
-        if await self._dependencies_satisfied(task.task_id):
-            # Submit immediately
-            return await self.task_manager.submit_task(task)
-        else:
-            # Add to waiting list
-            for dep_id in dependencies:
-                if dep_id not in self.waiting_tasks:
-                    self.waiting_tasks[dep_id] = []
-                self.waiting_tasks[dep_id].append(task.task_id)
-            
-            # Store task but don't queue yet
-            self.task_manager.active_tasks[task.task_id] = task
-            task.status = TaskStatus.PENDING
-            await self.task_manager._persist_task(task)
-            
-            return task.task_id
-    
-    async def handle_task_completion(self, completed_task_id: str):
-        """Handle completion and check for dependent tasks"""
-        
-        if completed_task_id in self.waiting_tasks:
-            dependent_task_ids = self.waiting_tasks[completed_task_id]
-            
-            for task_id in dependent_task_ids:
-                if await self._dependencies_satisfied(task_id):
-                    # Dependencies satisfied, submit task
-                    task = self.task_manager.active_tasks[task_id]
-                    await self.task_manager.submit_task(task)
-            
-            # Clean up
-            del self.waiting_tasks[completed_task_id]
-    
-    async def _dependencies_satisfied(self, task_id: str) -> bool:
-        """Check if all dependencies for a task are completed"""
-        
-        if task_id not in self.dependency_graph:
-            return True
-        
-        dependencies = self.dependency_graph[task_id]
-        
-        for dep_id in dependencies:
-            if dep_id not in self.task_manager.active_tasks:
-                return False
-            
-            dep_task = self.task_manager.active_tasks[dep_id]
-            if dep_task.status != TaskStatus.COMPLETED:
-                return False
-        
-        return True
-```
+## Workflow Integration
 
-### Agent Coordination and Load Balancing
-```python
-class AgentCoordinator:
-    def __init__(self, task_manager: TaskManager):
-        self.task_manager = task_manager
-        self.agent_capabilities: Dict[str, List[str]] = {}
-        self.agent_load: Dict[str, int] = {}
-        self.agent_performance: Dict[str, Dict[str, float]] = {}
-        
-    def register_agent(self, agent_id: str, capabilities: List[str]):
-        """Register an agent with its capabilities"""
-        self.agent_capabilities[agent_id] = capabilities
-        self.agent_load[agent_id] = 0
-        self.agent_performance[agent_id] = {
-            'success_rate': 1.0,
-            'avg_completion_time': 0.0,
-            'total_tasks': 0
-        }
-    
-    async def assign_optimal_task(self, agent_id: str) -> Optional[Task]:
-        """Assign the most suitable task to an agent"""
-        
-        if agent_id not in self.agent_capabilities:
-            return None
-        
-        capabilities = self.agent_capabilities[agent_id]
-        current_load = self.agent_load[agent_id]
-        
-        # Find best matching task
-        best_task = None
-        best_score = 0.0
-        
-        for priority in TaskPriority:
-            queue = self.task_manager.priority_queues[priority]
-            
-            for task in queue:
-                if task.status != TaskStatus.PENDING:
-                    continue
-                
-                # Calculate assignment score
-                score = self._calculate_assignment_score(
-                    task, agent_id, capabilities, current_load
-                )
-                
-                if score > best_score:
-                    best_score = score
-                    best_task = task
-        
-        if best_task:
-            # Claim the task
-            claimed_task = await self.task_manager.claim_task(
-                agent_id, capabilities
-            )
-            
-            if claimed_task and claimed_task.task_id == best_task.task_id:
-                self.agent_load[agent_id] += 1
-                return claimed_task
-        
-        return None
-    
-    def _calculate_assignment_score(self, task: Task, agent_id: str, 
-                                  capabilities: List[str], current_load: int) -> float:
-        """Calculate how well a task matches an agent"""
-        
-        score = 0.0
-        
-        # Capability match
-        if task.task_type in capabilities or 'general' in capabilities:
-            score += 50.0
-        
-        # Priority boost
-        priority_boost = {
-            TaskPriority.CRITICAL: 40.0,
-            TaskPriority.HIGH: 25.0,
-            TaskPriority.MEDIUM: 10.0,
-            TaskPriority.LOW: 5.0
-        }
-        score += priority_boost.get(task.priority, 0.0)
-        
-        # Load balancing penalty
-        load_penalty = current_load * 5.0
-        score -= load_penalty
-        
-        # Performance bonus
-        if agent_id in self.agent_performance:
-            perf = self.agent_performance[agent_id]
-            score += perf['success_rate'] * 20.0
-            
-            # Prefer faster agents for simple tasks
-            if task.task_type in ['simple_qa', 'quick_analysis']:
-                score += (1.0 / max(perf['avg_completion_time'], 0.1)) * 10.0
-        
-        return score
-    
-    async def handle_task_completion(self, agent_id: str, task_id: str, 
-                                   success: bool, completion_time: float):
-        """Update agent performance metrics"""
-        
-        if agent_id in self.agent_load:
-            self.agent_load[agent_id] = max(0, self.agent_load[agent_id] - 1)
-        
-        if agent_id in self.agent_performance:
-            perf = self.agent_performance[agent_id]
-            
-            # Update success rate (moving average)
-            alpha = 0.1  # Learning rate
-            perf['success_rate'] = (
-                (1 - alpha) * perf['success_rate'] + 
-                alpha * (1.0 if success else 0.0)
-            )
-            
-            # Update completion time (moving average)
-            perf['avg_completion_time'] = (
-                (1 - alpha) * perf['avg_completion_time'] + 
-                alpha * completion_time
-            )
-            
-            perf['total_tasks'] += 1
-```
+### LangGraph State Management
 
-### Phase 2 Federated Extensions
-```python
-class FederatedTaskManager:  # Phase 2
-    def __init__(self, local_task_manager: TaskManager, node_id: str):
-        self.local_manager = local_task_manager
-        self.node_id = node_id
-        self.federation_client = FederationClient()
-        self.privacy_filter = PrivacyFilter()
-        
-    async def sync_with_federation(self):
-        """Privacy-preserving task coordination with other nodes"""
-        
-        # Create privacy-preserving task summary
-        local_summary = self._create_task_summary()
-        
-        # Exchange with other nodes
-        federated_summaries = await self.federation_client.exchange_summaries(
-            local_summary
-        )
-        
-        # Update coordination based on federated insights
-        await self._update_coordination_strategy(federated_summaries)
-    
-    def _create_task_summary(self) -> Dict:
-        """Create privacy-preserving summary of local task state"""
-        
-        summary = {
-            'node_id': self.node_id,
-            'task_counts_by_type': {},
-            'average_completion_times': {},
-            'success_rates_by_type': {},
-            'current_load': len(self.local_manager.active_tasks),
-            # Exclude: specific task content, user data, proprietary logic
-        }
-        
-        # Aggregate statistics without exposing details
-        for task_type in ['coding', 'analysis', 'reasoning']:
-            relevant_tasks = [
-                task for task in self.local_manager.active_tasks.values()
-                if task.task_type == task_type
-            ]
-            
-            summary['task_counts_by_type'][task_type] = len(relevant_tasks)
-            
-            if relevant_tasks:
-                completion_times = [
-                    task.completed_at - task.started_at
-                    for task in relevant_tasks
-                    if task.completed_at and task.started_at
-                ]
-                
-                if completion_times:
-                    summary['average_completion_times'][task_type] = sum(completion_times) / len(completion_times)
-        
-        return summary
-    
-    async def _update_coordination_strategy(self, federated_summaries: List[Dict]):
-        """Update local coordination based on federated insights"""
-        
-        # Analyze federated load distribution
-        total_load = sum(summary.get('current_load', 0) for summary in federated_summaries)
-        
-        if total_load > 0:
-            # Adjust local task acceptance based on relative load
-            local_load_ratio = self.local_manager.active_tasks.__len__() / total_load
-            
-            # If significantly overloaded, become more selective
-            if local_load_ratio > 0.4:  # More than 40% of total load
-                self.local_manager.task_acceptance_threshold = 0.8
-            else:
-                self.local_manager.task_acceptance_threshold = 0.5
-```
+- **Workflow State**: Persistent state across workflow steps
+- **Checkpointing**: Automatic state snapshots for recovery
+- **Branch Management**: Handle conditional workflow paths
+- **Error Recovery**: Resume workflows from last successful checkpoint
 
-## Performance Monitoring
+### Task Types and Patterns
 
-### Task Metrics and Analytics
-```python
-class TaskAnalytics:
-    def __init__(self, task_manager: TaskManager):
-        self.task_manager = task_manager
-        self.metrics_history: List[Dict] = []
-        
-    def collect_metrics(self) -> Dict[str, Any]:
-        """Collect comprehensive task management metrics"""
-        
-        current_time = time.time()
-        active_tasks = self.task_manager.active_tasks
-        
-        metrics = {
-            'timestamp': current_time,
-            'total_tasks': len(active_tasks),
-            'tasks_by_status': self._count_by_status(active_tasks),
-            'tasks_by_priority': self._count_by_priority(active_tasks),
-            'average_queue_time': self._calculate_avg_queue_time(active_tasks),
-            'average_completion_time': self._calculate_avg_completion_time(active_tasks),
-            'throughput_per_hour': self._calculate_throughput(),
-            'agent_utilization': self._calculate_agent_utilization(),
-            'error_rate': self._calculate_error_rate(active_tasks)
-        }
-        
-        self.metrics_history.append(metrics)
-        
-        # Keep last 24 hours of metrics
-        cutoff_time = current_time - 86400
-        self.metrics_history = [
-            m for m in self.metrics_history if m['timestamp'] > cutoff_time
-        ]
-        
-        return metrics
-    
-    def _calculate_throughput(self) -> float:
-        """Calculate tasks completed per hour"""
-        
-        if len(self.metrics_history) < 2:
-            return 0.0
-        
-        recent_metrics = self.metrics_history[-12:]  # Last hour (5-minute intervals)
-        
-        if not recent_metrics:
-            return 0.0
-        
-        completed_counts = [
-            m['tasks_by_status'].get('completed', 0) for m in recent_metrics
-        ]
-        
-        if len(completed_counts) >= 2:
-            throughput = (completed_counts[-1] - completed_counts[0]) / (len(completed_counts) / 12)
-            return max(0.0, throughput)
-        
-        return 0.0
-```
+- **Sequential Tasks**: Linear dependency chains
+- **Parallel Tasks**: Independent tasks that can run concurrently
+- **Fan-out/Fan-in**: Parallel processing with aggregation
+- **Conditional Tasks**: Dynamic workflow paths based on results
 
-## Performance Targets
+## Success Criteria
 
-| Metric | Phase 1 Target | Phase 2 Target |
-|--------|----------------|----------------|
-| Task Assignment Latency | <10ms | <50ms |
-| Task Completion Rate | >95% | >95% |
-| Agent Utilization | >80% | >85% |
-| System Throughput | 100+ tasks/hour | 1000+ tasks/hour |
-| Coordination Efficiency | +30% vs baseline | +40% vs baseline |
+### Performance Targets
 
-## Related Decisions
+- **Task Assignment Latency**: <50ms for task assignment to available agent
+- **Queue Processing**: 1000+ tasks/minute sustained throughput
+- **Dependency Resolution**: <10ms to resolve task dependencies
+- **State Persistence**: <100ms to persist task state changes
+- **Agent Coordination**: Support 20+ concurrent agents without bottlenecks
 
-- ADR-004: Orchestration and Task Management
+### Reliability Metrics
 
-- ADR-005: Caching and Shared Context Layer
+- **Task Completion Rate**: >99% of tasks complete successfully
+- **Failure Recovery**: <30s to detect and reassign failed tasks
+- **State Consistency**: Zero data loss during normal operations
+- **Dependency Accuracy**: 100% correct dependency resolution
+- **Queue Integrity**: No task loss or duplication in queues
 
-- ADR-014: Federated Basics (Phase 2)
+### Scalability Metrics
 
-## Monitoring
+- **Concurrent Tasks**: Support 200+ active tasks simultaneously
+- **Agent Pool Size**: Scale to 50+ agents in Phase 2
+- **Queue Depth**: Handle 1000+ queued tasks without degradation
+- **Memory Efficiency**: <500MB memory usage for task management
+- **Network Efficiency**: <100KB/s network overhead for coordination
 
-- Task queue depths and processing rates
+### Quality Metrics
 
-- Agent assignment patterns and load distribution
+- **Assignment Accuracy**: >95% optimal agent-task matching
+- **Resource Utilization**: >80% agent utilization during peak load
+- **SLA Compliance**: 98% of tasks complete within defined timeouts
+- **Error Rate**: <1% task failures due to coordination issues
 
-- Task completion times and success rates
+## Implementation Strategy
 
-- System resource utilization
+### Phase 1A: Core Task Management (Week 1-2)
 
-- Coordination overhead and efficiency
+- Implement basic priority queues and Redis persistence
+- Add simple dependency resolution and agent assignment
+- Test with linear workflows and validate performance targets
+
+### Phase 1B: Advanced Coordination (Week 3-4)
+
+- Add sophisticated agent matching and load balancing
+- Implement failure detection and automatic recovery
+- Test with complex multi-agent workflows and dependency chains
+
+### Phase 1C: Production Hardening (Week 5-6)
+
+- Add comprehensive monitoring and performance analytics
+- Implement advanced error handling and escalation procedures
+- Load testing and optimization for production deployment
+
+### Phase 2 Extensions
+
+- Hierarchical task management for complex projects
+- Advanced scheduling algorithms with machine learning
+- Cross-instance task coordination for federated deployments
