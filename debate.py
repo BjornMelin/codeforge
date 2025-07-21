@@ -4,11 +4,10 @@
 This module implements a multi-agent debate mechanism using LangGraph.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 from langgraph.graph import StateGraph
 
-from .config import settings
 from .router import route_model
 from .state import State
 
@@ -22,7 +21,7 @@ async def pro_agent(state: State) -> State:
     Returns:
         Updated state with pro argument.
     """
-    pro: Dict[str, Any] = await route_model("Argue pro: " + state["task"], "reasoning")
+    pro: dict[str, Any] = await route_model("Argue pro: " + state["task"], "reasoning")
     state["messages"].append({"role": "pro", "content": pro["response"]})
     return state
 
@@ -36,7 +35,7 @@ async def con_agent(state: State) -> State:
     Returns:
         Updated state with con argument.
     """
-    con: Dict[str, Any] = await route_model("Argue con: " + state["task"], "reasoning")
+    con: dict[str, Any] = await route_model("Argue con: " + state["task"], "reasoning")
     state["messages"].append({"role": "con", "content": con["response"]})
     return state
 
@@ -50,7 +49,7 @@ async def moderator_agent(state: State) -> State:
     Returns:
         Updated state with moderation.
     """
-    mod: Dict[str, Any] = await route_model(
+    mod: dict[str, Any] = await route_model(
         "Moderate: " + " ".join(m["content"] for m in state["messages"]), "reasoning"
     )
     state["messages"].append({"role": "moderator", "content": mod["response"]})

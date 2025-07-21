@@ -4,7 +4,7 @@
 This module implements advanced GraphRAG+ with hybrid DB and web integration.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from neo4j import AsyncGraphDatabase, GraphDatabase
 from qdrant_client import AsyncQdrantClient, QdrantClient
@@ -34,7 +34,7 @@ sparse_embedder: Optional[SentenceTransformer] = (
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
 async def graphrag_plus(
     query: str, content_type: str = "general"
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Perform agentic hybrid GraphRAG+ retrieval with web fallback.
 
     Args:
@@ -45,8 +45,8 @@ async def graphrag_plus(
         List of fused retrieval results.
     """
     dim: int = 256 if content_type == "code" else 768
-    query_embed: List[float] = embedder.encode(query)[:dim].tolist()
-    sparse_query: Optional[List[float]] = (
+    query_embed: list[float] = embedder.encode(query)[:dim].tolist()
+    sparse_query: Optional[list[float]] = (
         sparse_embedder.encode(query).tolist() if sparse_embedder else None
     )
 
@@ -58,18 +58,18 @@ async def graphrag_plus(
             sparse_vector=sparse_query,
         )
     else:
-        vector_results = qdrant.query(
+        vector_results = qdrant.query(  # type: ignore
             collection_name="docs",
             query=query_embed,
             limit=5,
             sparse_vector=sparse_query,
-        )  # type: ignore
+        )
 
     if not vector_results:
-        web_results: List[Dict[str, Any]] = tavily.search(query=query, max_results=5)
+        web_results: list[dict[str, Any]] = tavily.search(query=query, max_results=5)
         content: str = web_results[0]["content"]
-        web_embed: List[float] = embedder.encode(content).tolist()
-        web_sparse: Optional[List[float]] = (
+        web_embed: list[float] = embedder.encode(content).tolist()
+        web_sparse: Optional[list[float]] = (
             sparse_embedder.encode(content).tolist() if sparse_embedder else None
         )
 
@@ -93,33 +93,33 @@ async def graphrag_plus(
         else:
             with neo4j_driver.session() as session:  # type: ignore
                 session.run("CREATE (n:WebResult {content: $content})", content=content)
-            qdrant.upsert(
+            qdrant.upsert(  # type: ignore
                 collection_name="docs",
                 points=[
                     {"id": "web1", "vector": web_embed, "sparse_vector": web_sparse}
                 ],
-            )  # type: ignore
-            vector_results = qdrant.query(
+            )
+            vector_results = qdrant.query(  # type: ignore
                 collection_name="docs",
                 query=query_embed,
                 limit=5,
                 sparse_vector=sparse_query,
-            )  # type: ignore
+            )
 
     if settings.use_async and isinstance(neo4j_driver, AsyncGraphDatabase):
         async with neo4j_driver.session() as session:
-            graph_results: List[Dict[str, Any]] = (
+            graph_results: list[dict[str, Any]] = (
                 await session.run(
                     "MATCH (n) WHERE n.content CONTAINS $query RETURN n", query=query
                 )
             ).data()
     else:
         with neo4j_driver.session() as session:  # type: ignore
-            graph_results: List[Dict[str, Any]] = session.run(
+            graph_results: list[dict[str, Any]] = session.run(
                 "MATCH (n) WHERE n.content CONTAINS $query RETURN n", query=query
             ).data()
 
-    fused: List[Dict[str, Any]] = vector_results + graph_results  # type: ignore
+    fused: list[dict[str, Any]] = vector_results + graph_results  # type: ignore
     if settings.use_sparse:
         fused = sorted(fused, key=lambda x: x.get("sparse_score", 0), reverse=True)
     return fused[:10]

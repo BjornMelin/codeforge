@@ -4,7 +4,7 @@
 This module handles dynamic model selection and invocation via OpenRouter.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -17,7 +17,7 @@ openrouter: AsyncOpenAI = AsyncOpenAI(
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
-async def route_model(task: str, category: str) -> Dict[str, Any]:
+async def route_model(task: str, category: str) -> dict[str, Any]:
     """Route task to appropriate model based on complexity and category.
 
     Args:
@@ -36,7 +36,7 @@ async def route_model(task: str, category: str) -> Dict[str, Any]:
     else:
         model = "google/gemini-2.5-flash"
 
-    response_format: Dict[str, Any] | None = (
+    response_format: dict[str, Any] | None = (
         {
             "type": "json_object",
             "json_schema": {

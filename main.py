@@ -6,7 +6,7 @@ This module sets up and runs the primary autonomy workflow using LangGraph.
 
 import os
 from collections import deque
-from typing import Any, Dict
+from typing import Any
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -36,7 +36,7 @@ workflow.add_edge("implement", END)
 graph = workflow.compile(checkpointer=checkpointer)
 
 
-async def run_autonomy_workflow(input: str) -> Dict[str, Any]:
+async def run_autonomy_workflow(input: str) -> dict[str, Any]:
     """Run the full autonomy workflow from input.
 
     Args:
@@ -63,10 +63,10 @@ async def run_autonomy_workflow(input: str) -> Dict[str, Any]:
         import torch
 
         @torch.compile(mode="reduce-overhead")
-        async def compiled_invoke(state: State) -> Dict[str, Any]:
+        async def compiled_invoke(state: State) -> dict[str, Any]:
             return await graph.ainvoke(state)
 
-        result: Dict[str, Any] = await compiled_invoke(state)
+        result: dict[str, Any] = await compiled_invoke(state)
     else:
         result = await graph.ainvoke(state)
 

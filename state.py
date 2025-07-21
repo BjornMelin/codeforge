@@ -5,7 +5,7 @@ This module defines the state structure and utilities for hierarchical memory.
 """
 
 from collections import deque
-from typing import Annotated, Any, Dict, List, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph.message import add_messages
@@ -22,10 +22,10 @@ class State(TypedDict):
         input: Input query or PRD.
     """
 
-    messages: Annotated[List[Dict[str, Any]], add_messages]
+    messages: Annotated[list[dict[str, Any]], add_messages]
     task_queue: deque[str]
-    private: Dict[str, Any]
-    long_term: Dict[str, Any]
+    private: dict[str, Any]
+    long_term: dict[str, Any]
     input: str
 
 
